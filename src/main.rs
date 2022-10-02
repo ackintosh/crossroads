@@ -1,6 +1,6 @@
 fn main() {
     let interfaces = pnet_datalink::interfaces();
-    for i in interfaces {
+    for i in &interfaces {
         println!("{:?}", i);
     }
 
