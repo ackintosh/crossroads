@@ -3,6 +3,7 @@ version: '3'
 services:
   dev:
     build: .
+    privileged: true # in order to create network namespece (`ip netns add NAME`)
     volumes:
       - ./:/app
 

@@ -6,5 +6,9 @@ RUN apt-get update \
   && apt-get upgrade -y \
   && apt-get install -y -q \
   iptables \
-  iproute2
+  iproute2 \
+  ethtool \
+  iputils-ping
+
+COPY root.bashrc /root/.bashrc
 
