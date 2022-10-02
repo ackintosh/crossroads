@@ -1,0 +1,10 @@
+version: '3'
+
+services:
+  dev:
+    build: .
+    privileged: true # in order to create network namespece (`ip netns add NAME`)
+    entrypoint: sh -c "./configure_network.sh && bash"
+    volumes:
+      - ./:/app
+
