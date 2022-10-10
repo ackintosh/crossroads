@@ -6,5 +6,9 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+async-stream = "0.3"
+futures-util = "0.3"
 pnet_datalink = "0.31.0"
 pnet_packet = "0.31.0"
+tokio = { version = "1.21", features = ["macros", "rt-multi-thread"] }
+
