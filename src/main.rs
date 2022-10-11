@@ -3,6 +3,10 @@ use futures_util::{pin_mut, StreamExt};
 use pnet_datalink::{Config, DataLinkReceiver, NetworkInterface};
 use std::time::Duration;
 
+const ETHERNET_TYPE_IP: u16 = 0x0800;
+const ETHERNET_TYPE_ARP: u16 = 0x0806;
+const ETHERNET_TYPE_IPV6: u16 = 0x86dd;
+
 #[tokio::main]
 async fn main() {
     let interfaces: Vec<NetworkInterface> = pnet_datalink::interfaces()
@@ -36,7 +40,6 @@ async fn main() {
             };
 
             Receiver {
-                interface_name: i.name.clone(),
                 interface_index: i.index,
                 rx,
             }
@@ -50,9 +53,8 @@ async fn main() {
                     Ok(packet) => {
                         if let Some(packet) = pnet_packet::ethernet::EthernetPacket::owned(packet.to_vec()) {
                             yield Packet {
-                                interface_name: r.interface_name.clone(),
                                 interface_index: r.interface_index,
-                                packet,
+                                ethernet_packet: packet,
                             }
                         }
                     }
@@ -73,14 +75,41 @@ async fn main() {
 
     loop {
         while let Some(packet) = stream.next().await {
-            println!("{:?}", packet);
+            let interface = interfaces
+                .iter()
+                .find(|&i| i.index == packet.interface_index)
+                .expect("should have the network interface");
+
+            if !should_handle_packet(&packet.ethernet_packet, interface) {
+                continue;
+            }
+
+            match packet.ethernet_packet.get_ethertype().0 {
+                ETHERNET_TYPE_IP => {
+                    println!("ip");
+                }
+                ETHERNET_TYPE_ARP => {
+                    println!("arp");
+                }
+                ETHERNET_TYPE_IPV6 => {
+                    println!("ipv6");
+                }
+                _ => {}
+            }
         }
     }
 }
 
+/// Determine if we handle the packet.
+fn should_handle_packet(
+    ethernet_packet: &pnet_packet::ethernet::EthernetPacket,
+    interface: &NetworkInterface,
+) -> bool {
+    ethernet_packet.get_destination() == interface.mac.expect("should have mac address")
+        || ethernet_packet.get_destination().is_broadcast()
+}
+
 struct Receiver {
-    /// The name of the interface.
-    interface_name: String,
     /// The interface index (operating system specific).
     interface_index: u32,
     /// Structure for receiving packets at the data link layer.
@@ -89,11 +118,9 @@ struct Receiver {
 
 #[derive(Debug)]
 struct Packet {
-    /// The name of the interface.
-    interface_name: String,
     /// The interface index (operating system specific).
     interface_index: u32,
-    packet: pnet_packet::ethernet::EthernetPacket<'static>,
+    ethernet_packet: pnet_packet::ethernet::EthernetPacket<'static>,
 }
 
 // struct Channel {
