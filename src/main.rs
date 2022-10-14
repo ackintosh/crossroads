@@ -1,12 +1,15 @@
+mod arp;
 mod ipv4;
 
+use crate::arp::ArpTable;
+use crate::ipv4::Ipv4Handler;
 use async_stream::stream;
 use futures_util::{pin_mut, StreamExt};
 use pnet_datalink::{Config, DataLinkReceiver, NetworkInterface};
-use std::time::Duration;
-use pnet_packet::Packet;
 use pnet_packet::ipv4::Ipv4Packet;
-use crate::ipv4::Ipv4Handler;
+use pnet_packet::Packet;
+use std::sync::{Arc, RwLock};
+use std::time::Duration;
 
 const ETHERNET_TYPE_IP: u16 = 0x0800;
 const ETHERNET_TYPE_ARP: u16 = 0x0806;
@@ -79,6 +82,8 @@ async fn main() {
 
     pin_mut!(stream);
 
+    let arp_table = Arc::new(RwLock::new(ArpTable::new()));
+
     loop {
         while let Some(received_packet) = stream.next().await {
             let interface = interfaces
@@ -94,9 +99,11 @@ async fn main() {
                 ETHERNET_TYPE_IP => {
                     // pnet::packet::ipv4::Ipv4Packet
                     // https://docs.rs/pnet/latest/pnet/packet/ipv4/struct.Ipv4Packet.html
-                    if let Some(ipv4) = Ipv4Packet::owned(received_packet.ethernet_packet.packet().to_vec()) {
+                    if let Some(ipv4) =
+                        Ipv4Packet::owned(received_packet.ethernet_packet.packet().to_vec())
+                    {
                         println!("ip: {:?}", ipv4);
-                        let handler = Ipv4Handler::new(interfaces.clone());
+                        let handler = Ipv4Handler::new(interfaces.clone(), arp_table.clone());
                         handler.handle(ipv4);
                     } else {
                         println!("Received a packet whose ETHERNET_TYPE is IP but we couldn't encode it to IPv4 packet.");
