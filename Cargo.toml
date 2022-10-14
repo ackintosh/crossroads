@@ -12,3 +12,5 @@ pnet_datalink = "0.31.0"
 pnet_packet = "0.31.0"
 tokio = { version = "1.21", features = ["macros", "rt-multi-thread"] }
 
+# from pnet_datalink
+ipnetwork = "0.19.0"

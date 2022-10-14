@@ -1,11 +1,15 @@
+mod ipv4;
+
 use async_stream::stream;
 use futures_util::{pin_mut, StreamExt};
 use pnet_datalink::{Config, DataLinkReceiver, NetworkInterface};
 use std::time::Duration;
+use pnet_packet::Packet;
+use pnet_packet::ipv4::Ipv4Packet;
+use crate::ipv4::Ipv4Handler;
 
 const ETHERNET_TYPE_IP: u16 = 0x0800;
 const ETHERNET_TYPE_ARP: u16 = 0x0806;
-const ETHERNET_TYPE_IPV6: u16 = 0x86dd;
 
 #[tokio::main]
 async fn main() {
@@ -51,8 +55,10 @@ async fn main() {
             for r in receivers.iter_mut() {
                 match r.rx.next() {
                     Ok(packet) => {
+                        // pnet::packet::ethernet::EthernetPacket
+                        // https://docs.rs/pnet/latest/pnet/packet/ethernet/struct.EthernetPacket.html#
                         if let Some(packet) = pnet_packet::ethernet::EthernetPacket::owned(packet.to_vec()) {
-                            yield Packet {
+                            yield ReceivedPacket {
                                 interface_index: r.interface_index,
                                 ethernet_packet: packet,
                             }
@@ -74,25 +80,30 @@ async fn main() {
     pin_mut!(stream);
 
     loop {
-        while let Some(packet) = stream.next().await {
+        while let Some(received_packet) = stream.next().await {
             let interface = interfaces
                 .iter()
-                .find(|&i| i.index == packet.interface_index)
+                .find(|&i| i.index == received_packet.interface_index)
                 .expect("should have the network interface");
 
-            if !should_handle_packet(&packet.ethernet_packet, interface) {
+            if !should_handle_packet(&received_packet.ethernet_packet, interface) {
                 continue;
             }
 
-            match packet.ethernet_packet.get_ethertype().0 {
+            match received_packet.ethernet_packet.get_ethertype().0 {
                 ETHERNET_TYPE_IP => {
-                    println!("ip");
+                    // pnet::packet::ipv4::Ipv4Packet
+                    // https://docs.rs/pnet/latest/pnet/packet/ipv4/struct.Ipv4Packet.html
+                    if let Some(ipv4) = Ipv4Packet::owned(received_packet.ethernet_packet.packet().to_vec()) {
+                        println!("ip: {:?}", ipv4);
+                        let handler = Ipv4Handler::new(interfaces.clone());
+                        handler.handle(ipv4);
+                    } else {
+                        println!("Received a packet whose ETHERNET_TYPE is IP but we couldn't encode it to IPv4 packet.");
+                    }
                 }
                 ETHERNET_TYPE_ARP => {
                     println!("arp");
-                }
-                ETHERNET_TYPE_IPV6 => {
-                    println!("ipv6");
                 }
                 _ => {}
             }
@@ -117,7 +128,7 @@ struct Receiver {
 }
 
 #[derive(Debug)]
-struct Packet {
+struct ReceivedPacket {
     /// The interface index (operating system specific).
     interface_index: u32,
     ethernet_packet: pnet_packet::ethernet::EthernetPacket<'static>,
