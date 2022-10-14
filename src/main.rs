@@ -1,7 +1,18 @@
+mod arp;
+mod ipv4;
+
+use crate::arp::ArpTable;
+use crate::ipv4::{spawn_ipv4_handler, Ipv4HandlerEvent};
 use async_stream::stream;
 use futures_util::{pin_mut, StreamExt};
 use pnet_datalink::{Config, DataLinkReceiver, NetworkInterface};
+use pnet_packet::ipv4::Ipv4Packet;
+use pnet_packet::Packet;
+use std::sync::{Arc, RwLock};
 use std::time::Duration;
+
+const ETHERNET_TYPE_IP: u16 = 0x0800;
+const ETHERNET_TYPE_ARP: u16 = 0x0806;
 
 #[tokio::main]
 async fn main() {
@@ -36,7 +47,6 @@ async fn main() {
             };
 
             Receiver {
-                interface_name: i.name.clone(),
                 interface_index: i.index,
                 rx,
             }
@@ -48,11 +58,12 @@ async fn main() {
             for r in receivers.iter_mut() {
                 match r.rx.next() {
                     Ok(packet) => {
+                        // pnet::packet::ethernet::EthernetPacket
+                        // https://docs.rs/pnet/latest/pnet/packet/ethernet/struct.EthernetPacket.html#
                         if let Some(packet) = pnet_packet::ethernet::EthernetPacket::owned(packet.to_vec()) {
-                            yield Packet {
-                                interface_name: r.interface_name.clone(),
+                            yield ReceivedPacket {
                                 interface_index: r.interface_index,
-                                packet,
+                                ethernet_packet: packet,
                             }
                         }
                     }
@@ -71,16 +82,55 @@ async fn main() {
 
     pin_mut!(stream);
 
+    let arp_table = Arc::new(RwLock::new(ArpTable::new()));
+
+    let sender_ipv4 = spawn_ipv4_handler(interfaces.clone(), arp_table.clone()).await;
+
     loop {
-        while let Some(packet) = stream.next().await {
-            println!("{:?}", packet);
+        while let Some(received_packet) = stream.next().await {
+            let interface = interfaces
+                .iter()
+                .find(|&i| i.index == received_packet.interface_index)
+                .expect("should have the network interface");
+
+            if !should_handle_packet(&received_packet.ethernet_packet, interface) {
+                continue;
+            }
+
+            match received_packet.ethernet_packet.get_ethertype().0 {
+                ETHERNET_TYPE_IP => {
+                    // pnet::packet::ipv4::Ipv4Packet
+                    // https://docs.rs/pnet/latest/pnet/packet/ipv4/struct.Ipv4Packet.html
+                    if let Some(ipv4) =
+                        Ipv4Packet::owned(received_packet.ethernet_packet.packet().to_vec())
+                    {
+                        println!("ip: {:?}", ipv4);
+                        if let Err(e) = sender_ipv4.send(Ipv4HandlerEvent::ReceivedPacket(ipv4)) {
+                            println!("{}", e);
+                        }
+                    } else {
+                        println!("Received a packet whose ETHERNET_TYPE is IP but we couldn't encode it to IPv4 packet.");
+                    }
+                }
+                ETHERNET_TYPE_ARP => {
+                    println!("arp");
+                }
+                _ => {}
+            }
         }
     }
 }
 
+/// Determine if we handle the packet.
+fn should_handle_packet(
+    ethernet_packet: &pnet_packet::ethernet::EthernetPacket,
+    interface: &NetworkInterface,
+) -> bool {
+    ethernet_packet.get_destination() == interface.mac.expect("should have mac address")
+        || ethernet_packet.get_destination().is_broadcast()
+}
+
 struct Receiver {
-    /// The name of the interface.
-    interface_name: String,
     /// The interface index (operating system specific).
     interface_index: u32,
     /// Structure for receiving packets at the data link layer.
@@ -88,12 +138,10 @@ struct Receiver {
 }
 
 #[derive(Debug)]
-struct Packet {
-    /// The name of the interface.
-    interface_name: String,
+struct ReceivedPacket {
     /// The interface index (operating system specific).
     interface_index: u32,
-    packet: pnet_packet::ethernet::EthernetPacket<'static>,
+    ethernet_packet: pnet_packet::ethernet::EthernetPacket<'static>,
 }
 
 // struct Channel {
