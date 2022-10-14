@@ -2,7 +2,7 @@ mod arp;
 mod ipv4;
 
 use crate::arp::ArpTable;
-use crate::ipv4::Ipv4Handler;
+use crate::ipv4::{spawn_ipv4_handler, Ipv4HandlerEvent};
 use async_stream::stream;
 use futures_util::{pin_mut, StreamExt};
 use pnet_datalink::{Config, DataLinkReceiver, NetworkInterface};
@@ -84,6 +84,8 @@ async fn main() {
 
     let arp_table = Arc::new(RwLock::new(ArpTable::new()));
 
+    let sender_ipv4 = spawn_ipv4_handler(interfaces.clone(), arp_table.clone()).await;
+
     loop {
         while let Some(received_packet) = stream.next().await {
             let interface = interfaces
@@ -103,8 +105,9 @@ async fn main() {
                         Ipv4Packet::owned(received_packet.ethernet_packet.packet().to_vec())
                     {
                         println!("ip: {:?}", ipv4);
-                        let handler = Ipv4Handler::new(interfaces.clone(), arp_table.clone());
-                        handler.handle(ipv4);
+                        if let Err(e) = sender_ipv4.send(Ipv4HandlerEvent::ReceivedPacket(ipv4)) {
+                            println!("{}", e);
+                        }
                     } else {
                         println!("Received a packet whose ETHERNET_TYPE is IP but we couldn't encode it to IPv4 packet.");
                     }
