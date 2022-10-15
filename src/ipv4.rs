@@ -1,3 +1,4 @@
+use crate::arp::ArpEvent;
 use crate::ArpTable;
 use ipnetwork::IpNetwork;
 use pnet_datalink::{MacAddr, NetworkInterface};
@@ -18,6 +19,7 @@ struct Ipv4Handler {
     ipv4_addresses: Vec<Ipv4Addr>,
     arp_table: Arc<RwLock<ArpTable>>,
     receiver: UnboundedReceiver<Ipv4HandlerEvent>,
+    sender_arp: UnboundedSender<ArpEvent>,
 }
 
 impl Ipv4Handler {
@@ -25,6 +27,7 @@ impl Ipv4Handler {
         interfaces: Vec<NetworkInterface>,
         arp_table: Arc<RwLock<ArpTable>>,
         receiver: UnboundedReceiver<Ipv4HandlerEvent>,
+        sender_arp: UnboundedSender<ArpEvent>,
     ) -> Self {
         let ipv4_addresses = interfaces
             .iter()
@@ -41,6 +44,7 @@ impl Ipv4Handler {
             ipv4_addresses,
             arp_table,
             receiver,
+            sender_arp,
         }
     }
 
@@ -59,7 +63,9 @@ impl Ipv4Handler {
             {
                 println!("mac_addr: {}", mac_addr);
             } else {
-                // TODO: Send arp request
+                if let Err(e) = self.sender_arp.send(ArpEvent::SendArpRequest) {
+                    println!("{:?}", e);
+                }
             }
         }
     }
@@ -88,9 +94,10 @@ impl Ipv4Handler {
 pub(crate) async fn spawn_ipv4_handler(
     interfaces: Vec<NetworkInterface>,
     arp_table: Arc<RwLock<ArpTable>>,
+    sender_arp: UnboundedSender<ArpEvent>,
 ) -> UnboundedSender<Ipv4HandlerEvent> {
     let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
-    Ipv4Handler::new(interfaces, arp_table, receiver).spawn();
+    Ipv4Handler::new(interfaces, arp_table, receiver, sender_arp).spawn();
 
     sender
 }
