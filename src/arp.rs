@@ -45,6 +45,7 @@ pub(crate) enum ArpHandlerEvent {
     ReceivedPacket(ArpPacket<'static>),
     /// An event let ArpHandler to send ARP request.
     SendArpRequest(ArpRequest),
+    Shutdown,
 }
 
 #[derive(Debug)]
@@ -80,6 +81,7 @@ impl ArpHandler {
                             let _arp = self.construct_request(request);
                             // TODO: Send the arp request via ethernet handler.
                         }
+                        ArpHandlerEvent::Shutdown => return,
                     }
                 }
             }

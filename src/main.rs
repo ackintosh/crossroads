@@ -2,11 +2,15 @@ mod arp;
 mod ethernet;
 mod ipv4;
 
-use crate::arp::{spawn_arp_handler, ArpTable};
-use crate::ethernet::spawn_ethernet_handler;
-use crate::ipv4::spawn_ipv4_handler;
+use crate::arp::{spawn_arp_handler, ArpHandlerEvent, ArpTable};
+use crate::ethernet::{spawn_ethernet_handler, EthernetHandlerEvent};
+use crate::ipv4::{spawn_ipv4_handler, Ipv4HandlerEvent};
 use pnet_datalink::NetworkInterface;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::{Arc, RwLock};
+use std::task::{Context, Poll};
+use tokio::signal::unix::{signal, Signal, SignalKind};
 
 #[tokio::main]
 async fn main() {
@@ -26,6 +30,7 @@ async fn main() {
     let (sender_arp, receiver_arp) = tokio::sync::mpsc::unbounded_channel();
     let (sender_ipv4, receiver_ipv4) = tokio::sync::mpsc::unbounded_channel();
 
+    // Spawn packet handlers.
     spawn_ethernet_handler(
         &interfaces,
         receiver_ethernet,
@@ -42,7 +47,41 @@ async fn main() {
     )
     .await;
 
-    loop {
+    // Block the current thread until a shutdown signal is received.
+    let result = tokio::runtime::Handle::current()
+        .spawn(async {
+            let mut handles = vec![];
+
+            match signal(SignalKind::terminate()) {
+                Ok(terminate_stream) => {
+                    let terminate = SignalFuture::new(terminate_stream, "Received SIGTERM");
+                    handles.push(terminate);
+                }
+                Err(e) => {} // TODO: error!("Could not register SIGTERM handler: {}", e),
+            }
+
+            match signal(SignalKind::interrupt()) {
+                Ok(interrupt_stream) => {
+                    let interrupt = SignalFuture::new(interrupt_stream, "Received SIGINT");
+                    handles.push(interrupt);
+                }
+                Err(e) => {} // TODO: error!("Could not register SIGINT handler: {}", e),
+            }
+
+            futures_util::future::select_all(handles.into_iter()).await
+        })
+        .await;
+
+    match result {
+        Ok(message) => {
+            println!("{:?}. Starting shutdown process...", message.0);
+            sender_ethernet
+                .send(EthernetHandlerEvent::Shutdown)
+                .unwrap();
+            sender_arp.send(ArpHandlerEvent::Shutdown).unwrap();
+            sender_ipv4.send(Ipv4HandlerEvent::Shutdown).unwrap();
+        }
+        Err(e) => {}
     }
 }
 
@@ -51,3 +90,30 @@ async fn main() {
 //     tx: Box<dyn DataLinkSender>,
 //     rx: Box<dyn DataLinkReceiver>,
 // }
+
+// cf. https://github.com/sigp/lighthouse/blob/d9910f96c5f71881b88eec15253b31890bcd28d2/lighthouse/environment/src/lib.rs#L492
+#[cfg(target_family = "unix")]
+pub(crate) struct SignalFuture {
+    signal: Signal,
+    message: &'static str,
+}
+
+#[cfg(target_family = "unix")]
+impl SignalFuture {
+    pub fn new(signal: Signal, message: &'static str) -> SignalFuture {
+        SignalFuture { signal, message }
+    }
+}
+
+#[cfg(target_family = "unix")]
+impl Future for SignalFuture {
+    type Output = Option<&'static str>;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        match self.signal.poll_recv(cx) {
+            Poll::Pending => Poll::Pending,
+            Poll::Ready(Some(_)) => Poll::Ready(Some(self.message)),
+            Poll::Ready(None) => Poll::Ready(None),
+        }
+    }
+}

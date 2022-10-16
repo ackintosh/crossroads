@@ -12,6 +12,7 @@ pub(crate) const IPV4_ADDRESS_LENGTH: u8 = 4;
 #[derive(Debug)]
 pub(crate) enum Ipv4HandlerEvent {
     ReceivedPacket(Ipv4Packet<'static>),
+    Shutdown,
 }
 
 struct Ipv4Handler {
@@ -63,11 +64,14 @@ impl Ipv4Handler {
         } else {
             // TODO: Fill the sender mac/ipv4 address with an actual one. Maybe routing table is
             // required to do that.
-            if let Err(e) = self.sender_arp.send(ArpHandlerEvent::SendArpRequest(ArpRequest {
-                sender_mac_address: MacAddr::zero(),      // TODO
-                sender_ipv4_address: Ipv4Addr::BROADCAST, // TODO
-                target_ipv4_address: packet.get_destination(),
-            })) {
+            if let Err(e) = self
+                .sender_arp
+                .send(ArpHandlerEvent::SendArpRequest(ArpRequest {
+                    sender_mac_address: MacAddr::zero(),      // TODO
+                    sender_ipv4_address: Ipv4Addr::BROADCAST, // TODO
+                    target_ipv4_address: packet.get_destination(),
+                }))
+            {
                 println!("Failed to send ArpRequest to ArpHandler: {:?}", e);
             }
         }
@@ -87,6 +91,7 @@ impl Ipv4Handler {
                         Ipv4HandlerEvent::ReceivedPacket(ipv4_packet) => {
                             self.handle_received_packet(ipv4_packet)
                         }
+                        Ipv4HandlerEvent::Shutdown => return,
                     }
                 }
             }

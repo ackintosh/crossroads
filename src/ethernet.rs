@@ -7,6 +7,7 @@ use pnet_packet::arp::ArpPacket;
 use pnet_packet::ipv4::Ipv4Packet;
 use pnet_packet::Packet;
 use std::time::Duration;
+use tokio::select;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
 pub(crate) const ETHERNET_TYPE_IP: u16 = 0x0800;
@@ -14,7 +15,10 @@ pub(crate) const ETHERNET_TYPE_ARP: u16 = 0x0806;
 
 pub(crate) const ETHERNET_ADDRESS_LENGTH: u8 = 6;
 
-pub(crate) enum EthernetHandlerEvent {}
+#[derive(Debug)]
+pub(crate) enum EthernetHandlerEvent {
+    Shutdown,
+}
 
 pub(crate) async fn spawn_ethernet_handler(
     interfaces: &Vec<NetworkInterface>,
@@ -112,51 +116,58 @@ impl EthernetHandler {
             pin_mut!(stream);
 
             loop {
-                while let Some(received_packet) = stream.next().await {
-                    let interface = self
-                        .interfaces
-                        .iter()
-                        .find(|&i| i.index == received_packet.interface_index)
-                        .expect("should have the network interface");
+                select! {
+                    received_packet = stream.select_next_some() => {
+                        let interface = self
+                            .interfaces
+                            .iter()
+                            .find(|&i| i.index == received_packet.interface_index)
+                            .expect("should have the network interface");
 
-                    if !Self::should_handle_packet(&received_packet.ethernet_packet, interface) {
-                        continue;
+                        if !Self::should_handle_packet(&received_packet.ethernet_packet, interface) {
+                            continue;
+                        }
+
+                        match received_packet.ethernet_packet.get_ethertype().0 {
+                            ETHERNET_TYPE_IP => {
+                                // pnet::packet::ipv4::Ipv4Packet
+                                // https://docs.rs/pnet/latest/pnet/packet/ipv4/struct.Ipv4Packet.html
+                                if let Some(ipv4) =
+                                    Ipv4Packet::owned(received_packet.ethernet_packet.packet().to_vec())
+                                {
+                                    println!("ip: {:?}", ipv4);
+                                    if let Err(e) = self
+                                        .sender_ipv4
+                                        .send(Ipv4HandlerEvent::ReceivedPacket(ipv4))
+                                    {
+                                        println!("{}", e);
+                                    }
+                                } else {
+                                    println!("Received a packet whose ETHERNET_TYPE is IP but we couldn't encode it to IPv4 packet.");
+                                }
+                            }
+                            ETHERNET_TYPE_ARP => {
+                                // pnet::packet::arp::ArpPacket
+                                // https://docs.rs/pnet/latest/pnet/packet/arp/struct.ArpPacket.html
+                                if let Some(arp) =
+                                    ArpPacket::owned(received_packet.ethernet_packet.packet().to_vec())
+                                {
+                                    println!("arp: {:?}", arp);
+                                    if let Err(e) = self.sender_arp.send(ArpHandlerEvent::ReceivedPacket(arp))
+                                    {
+                                        println!("{}", e);
+                                    }
+                                } else {
+                                    println!("Received a packet whose ETHERNET_TYPE is ARP but we couldn't encode it to ARP packet.");
+                                }
+                            }
+                            _ => {}
+                        }
                     }
-
-                    match received_packet.ethernet_packet.get_ethertype().0 {
-                        ETHERNET_TYPE_IP => {
-                            // pnet::packet::ipv4::Ipv4Packet
-                            // https://docs.rs/pnet/latest/pnet/packet/ipv4/struct.Ipv4Packet.html
-                            if let Some(ipv4) =
-                                Ipv4Packet::owned(received_packet.ethernet_packet.packet().to_vec())
-                            {
-                                println!("ip: {:?}", ipv4);
-                                if let Err(e) = self
-                                    .sender_ipv4
-                                    .send(Ipv4HandlerEvent::ReceivedPacket(ipv4))
-                                {
-                                    println!("{}", e);
-                                }
-                            } else {
-                                println!("Received a packet whose ETHERNET_TYPE is IP but we couldn't encode it to IPv4 packet.");
-                            }
+                    Some(event) = self.receiver.recv() => {
+                        match event {
+                            EthernetHandlerEvent::Shutdown => return,
                         }
-                        ETHERNET_TYPE_ARP => {
-                            // pnet::packet::arp::ArpPacket
-                            // https://docs.rs/pnet/latest/pnet/packet/arp/struct.ArpPacket.html
-                            if let Some(arp) =
-                                ArpPacket::owned(received_packet.ethernet_packet.packet().to_vec())
-                            {
-                                println!("arp: {:?}", arp);
-                                if let Err(e) = self.sender_arp.send(ArpHandlerEvent::ReceivedPacket(arp))
-                                {
-                                    println!("{}", e);
-                                }
-                            } else {
-                                println!("Received a packet whose ETHERNET_TYPE is ARP but we couldn't encode it to ARP packet.");
-                            }
-                        }
-                        _ => {}
                     }
                 }
             }
