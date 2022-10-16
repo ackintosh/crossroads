@@ -8,6 +8,7 @@ use std::collections::HashMap;
 use std::net::Ipv4Addr;
 use std::sync::{Arc, RwLock};
 use tokio::sync::mpsc::UnboundedReceiver;
+use tokio::task::JoinHandle;
 
 const ARP_HARDWARE_TYPE_ETHERNET: u16 = 0x0001;
 
@@ -62,7 +63,7 @@ struct ArpHandler {
 }
 
 impl ArpHandler {
-    fn spawn(mut self) {
+    fn spawn(mut self) -> JoinHandle<()> {
         let fut = async move {
             loop {
                 if let Some(event) = self.receiver.recv().await {
@@ -87,7 +88,7 @@ impl ArpHandler {
             }
         };
 
-        tokio::runtime::Handle::current().spawn(fut);
+        tokio::runtime::Handle::current().spawn(fut)
     }
 
     fn handle_request_packet(&self, packet: ArpPacket<'static>) {
@@ -150,7 +151,7 @@ pub(crate) async fn spawn_arp_handler(
     interfaces: &Vec<NetworkInterface>,
     arp_table: Arc<RwLock<ArpTable>>,
     receiver: UnboundedReceiver<ArpHandlerEvent>,
-) {
+) -> JoinHandle<()> {
     let mut interface_map = HashMap::new();
     for i in interfaces {
         i.ips
@@ -169,5 +170,5 @@ pub(crate) async fn spawn_arp_handler(
         receiver,
         interfaces: interface_map,
     }
-    .spawn();
+    .spawn()
 }

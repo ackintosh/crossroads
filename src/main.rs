@@ -31,15 +31,15 @@ async fn main() {
     let (sender_ipv4, receiver_ipv4) = tokio::sync::mpsc::unbounded_channel();
 
     // Spawn packet handlers.
-    spawn_ethernet_handler(
+    let jh_ethernet = spawn_ethernet_handler(
         &interfaces,
         receiver_ethernet,
         sender_arp.clone(),
         sender_ipv4.clone(),
     )
     .await;
-    spawn_arp_handler(&interfaces, arp_table.clone(), receiver_arp).await;
-    spawn_ipv4_handler(
+    let jh_arp = spawn_arp_handler(&interfaces, arp_table.clone(), receiver_arp).await;
+    let jh_ipv4 = spawn_ipv4_handler(
         interfaces.clone(),
         arp_table.clone(),
         receiver_ipv4,
@@ -80,6 +80,10 @@ async fn main() {
                 .unwrap();
             sender_arp.send(ArpHandlerEvent::Shutdown).unwrap();
             sender_ipv4.send(Ipv4HandlerEvent::Shutdown).unwrap();
+
+            // TODO: Graceful shutdown on each handlers.
+            futures_util::join!(jh_ethernet, jh_arp, jh_ipv4);
+            println!("done.")
         }
         Err(e) => {}
     }

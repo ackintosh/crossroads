@@ -6,6 +6,7 @@ use pnet_packet::ipv4::Ipv4Packet;
 use std::net::Ipv4Addr;
 use std::sync::{Arc, RwLock};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
+use tokio::task::JoinHandle;
 
 pub(crate) const IPV4_ADDRESS_LENGTH: u8 = 4;
 
@@ -82,7 +83,7 @@ impl Ipv4Handler {
         self.ipv4_addresses.contains(&dest) || dest.is_broadcast()
     }
 
-    fn spawn(mut self) {
+    fn spawn(mut self) -> JoinHandle<()> {
         println!("Ipv4Handler started");
         let fut = async move {
             loop {
@@ -97,7 +98,7 @@ impl Ipv4Handler {
             }
         };
 
-        tokio::runtime::Handle::current().spawn(fut);
+        tokio::runtime::Handle::current().spawn(fut)
     }
 }
 
@@ -106,6 +107,6 @@ pub(crate) async fn spawn_ipv4_handler(
     arp_table: Arc<RwLock<ArpTable>>,
     receiver: UnboundedReceiver<Ipv4HandlerEvent>,
     sender_arp: UnboundedSender<ArpHandlerEvent>,
-) {
-    Ipv4Handler::new(interfaces, arp_table, receiver, sender_arp).spawn();
+) -> JoinHandle<()> {
+    Ipv4Handler::new(interfaces, arp_table, receiver, sender_arp).spawn()
 }

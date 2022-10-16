@@ -9,6 +9,7 @@ use pnet_packet::Packet;
 use std::time::Duration;
 use tokio::select;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
+use tokio::task::JoinHandle;
 
 pub(crate) const ETHERNET_TYPE_IP: u16 = 0x0800;
 pub(crate) const ETHERNET_TYPE_ARP: u16 = 0x0806;
@@ -25,14 +26,14 @@ pub(crate) async fn spawn_ethernet_handler(
     receiver: UnboundedReceiver<EthernetHandlerEvent>,
     sender_arp: UnboundedSender<ArpHandlerEvent>,
     sender_ipv4: UnboundedSender<Ipv4HandlerEvent>,
-) {
+) -> JoinHandle<()> {
     EthernetHandler {
         interfaces: interfaces.clone(),
         receiver,
         sender_arp,
         sender_ipv4,
     }
-    .spawn();
+    .spawn()
 }
 
 struct EthernetHandler {
@@ -57,7 +58,7 @@ struct ReceivedPacket {
 }
 
 impl EthernetHandler {
-    fn spawn(mut self) {
+    fn spawn(mut self) -> JoinHandle<()> {
         let config = Config {
             // Specifying read timeout to be `0` in order to let the receiver have non-blocking behavior.
             // https://github.com/libpnet/libpnet/issues/343#issuecomment-406866437
@@ -173,7 +174,7 @@ impl EthernetHandler {
             }
         };
 
-        tokio::runtime::Handle::current().spawn(fut);
+        tokio::runtime::Handle::current().spawn(fut)
     }
 
     /// Determine if we handle the packet.
