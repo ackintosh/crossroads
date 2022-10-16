@@ -29,8 +29,13 @@ impl ArpTable {
         self.entries.get(ipv4)
     }
 
-    pub(crate) fn insert(&mut self, ipv4: Ipv4Addr, mac: MacAddr) {
-        self.entries.insert(ipv4, mac);
+    pub(crate) fn put(&mut self, ipv4: Ipv4Addr, mac: MacAddr) {
+        if let Some(old) = self.entries.insert(ipv4, mac) {
+            println!(
+                "Replaced ARP table. ipv4: {}, old_mac: {}, new_mac: {}",
+                ipv4, mac, old
+            );
+        }
     }
 }
 
@@ -88,7 +93,7 @@ impl ArpHandler {
         self.arp_table
             .write()
             .expect("write guard")
-            .insert(packet.get_sender_proto_addr(), packet.get_sender_hw_addr());
+            .put(packet.get_sender_proto_addr(), packet.get_sender_hw_addr());
 
         // Determine if the packet is ours.
         if let Some(interface) = self.interfaces.get(&packet.get_target_proto_addr()) {
