@@ -1,13 +1,13 @@
-use crate::arp::ArpEvent;
+use crate::arp::{ArpEvent, ArpRequest};
 use crate::ArpTable;
 use ipnetwork::IpNetwork;
 use pnet_datalink::{MacAddr, NetworkInterface};
 use pnet_packet::ipv4::Ipv4Packet;
-use std::borrow::Borrow;
-use std::collections::HashMap;
-use std::net::{IpAddr, Ipv4Addr};
+use std::net::Ipv4Addr;
 use std::sync::{Arc, RwLock};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
+
+pub(crate) const IPV4_ADDRESS_LENGTH: u8 = 4;
 
 #[derive(Debug)]
 pub(crate) enum Ipv4HandlerEvent {
@@ -31,8 +31,7 @@ impl Ipv4Handler {
     ) -> Self {
         let ipv4_addresses = interfaces
             .iter()
-            .map(|i| i.ips.iter().filter(|&ipn| ipn.is_ipv4()).clone())
-            .flatten()
+            .flat_map(|i| i.ips.iter().filter(|&ipn| ipn.is_ipv4()))
             .filter_map(|ipn| match ipn {
                 IpNetwork::V4(ipv4n) => Some(ipv4n.ip()),
                 IpNetwork::V6(_) => None,
@@ -48,24 +47,28 @@ impl Ipv4Handler {
         }
     }
 
-    fn handle(&self, packet: Ipv4Packet) {
+    fn handle_received_packet(&self, packet: Ipv4Packet) {
         if self.determine_if_ours(&packet) {
             println!("TODO");
             return;
         }
 
+        if let Some(_mac_addr) = self
+            .arp_table
+            .read()
+            .expect("read guard")
+            .get(&packet.get_destination())
         {
-            if let Some(mac_addr) = self
-                .arp_table
-                .read()
-                .expect("read guard")
-                .get(&packet.get_destination())
-            {
-                println!("mac_addr: {}", mac_addr);
-            } else {
-                if let Err(e) = self.sender_arp.send(ArpEvent::SendArpRequest) {
-                    println!("{:?}", e);
-                }
+            // TODO: Transfer the packet to an appropriate next hop.
+        } else {
+            // TODO: Fill the sender mac/ipv4 address with an actual one. Maybe routing table is
+            // required to do that.
+            if let Err(e) = self.sender_arp.send(ArpEvent::SendArpRequest(ArpRequest {
+                sender_mac_address: MacAddr::zero(),      // TODO
+                sender_ipv4_address: Ipv4Addr::BROADCAST, // TODO
+                target_ipv4_address: packet.get_destination(),
+            })) {
+                println!("Failed to send ArpRequest to ArpHandler: {:?}", e);
             }
         }
     }
@@ -81,7 +84,9 @@ impl Ipv4Handler {
             loop {
                 if let Some(event) = self.receiver.recv().await {
                     match event {
-                        Ipv4HandlerEvent::ReceivedPacket(ipv4_packet) => self.handle(ipv4_packet),
+                        Ipv4HandlerEvent::ReceivedPacket(ipv4_packet) => {
+                            self.handle_received_packet(ipv4_packet)
+                        }
                     }
                 }
             }

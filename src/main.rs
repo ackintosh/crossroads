@@ -15,6 +15,8 @@ use std::time::Duration;
 const ETHERNET_TYPE_IP: u16 = 0x0800;
 const ETHERNET_TYPE_ARP: u16 = 0x0806;
 
+const ETHERNET_ADDRESS_LENGTH: u8 = 6;
+
 #[tokio::main]
 async fn main() {
     let interfaces: Vec<NetworkInterface> = pnet_datalink::interfaces()
@@ -85,7 +87,7 @@ async fn main() {
 
     let arp_table = Arc::new(RwLock::new(ArpTable::new()));
 
-    let sender_arp = spawn_arp_handler(arp_table.clone()).await;
+    let sender_arp = spawn_arp_handler(&interfaces, arp_table.clone()).await;
     let sender_ipv4 =
         spawn_ipv4_handler(interfaces.clone(), arp_table.clone(), sender_arp.clone()).await;
 
@@ -116,6 +118,8 @@ async fn main() {
                     }
                 }
                 ETHERNET_TYPE_ARP => {
+                    // pnet::packet::arp::ArpPacket
+                    // https://docs.rs/pnet/latest/pnet/packet/arp/struct.ArpPacket.html
                     if let Some(arp) =
                         ArpPacket::owned(received_packet.ethernet_packet.packet().to_vec())
                     {
