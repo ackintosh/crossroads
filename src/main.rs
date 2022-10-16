@@ -1,21 +1,16 @@
 mod arp;
+mod ethernet;
 mod ipv4;
 
-use crate::arp::{spawn_arp_handler, ArpEvent, ArpTable};
+use crate::arp::{spawn_arp_handler, ArpHandlerEvent, ArpTable};
+use crate::ethernet::{spawn_ethernet_handler, EthernetHandlerEvent};
 use crate::ipv4::{spawn_ipv4_handler, Ipv4HandlerEvent};
-use async_stream::stream;
-use futures_util::{pin_mut, StreamExt};
-use pnet_datalink::{Config, DataLinkReceiver, NetworkInterface};
-use pnet_packet::arp::ArpPacket;
-use pnet_packet::ipv4::Ipv4Packet;
-use pnet_packet::Packet;
+use pnet_datalink::NetworkInterface;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::{Arc, RwLock};
-use std::time::Duration;
-
-const ETHERNET_TYPE_IP: u16 = 0x0800;
-const ETHERNET_TYPE_ARP: u16 = 0x0806;
-
-const ETHERNET_ADDRESS_LENGTH: u8 = 6;
+use std::task::{Context, Poll};
+use tokio::signal::unix::{signal, Signal, SignalKind};
 
 #[tokio::main]
 async fn main() {
@@ -30,134 +25,64 @@ async fn main() {
         println!("{:?}", i);
     }
 
-    let config = Config {
-        // Specifying read timeout to be `0` in order to let the receiver have non-blocking behavior.
-        // https://github.com/libpnet/libpnet/issues/343#issuecomment-406866437
-        read_timeout: Some(Duration::from_secs(0)),
-        ..Default::default()
-    };
-
-    let mut receivers = interfaces
-        .iter()
-        .map(|i| {
-            let (_tx, rx) = match pnet_datalink::channel(i, config) {
-                Ok(pnet_datalink::Channel::Ethernet(tx, rx)) => (tx, rx),
-                Ok(_) => panic!("Unhandled channel type"),
-                Err(e) => panic!(
-                    "An error occurred when creating the datalink channel: {}",
-                    e
-                ),
-            };
-
-            Receiver {
-                interface_index: i.index,
-                rx,
-            }
-        })
-        .collect::<Vec<_>>();
-
-    let stream = stream! {
-        loop {
-            for r in receivers.iter_mut() {
-                match r.rx.next() {
-                    Ok(packet) => {
-                        // pnet::packet::ethernet::EthernetPacket
-                        // https://docs.rs/pnet/latest/pnet/packet/ethernet/struct.EthernetPacket.html#
-                        if let Some(packet) = pnet_packet::ethernet::EthernetPacket::owned(packet.to_vec()) {
-                            yield ReceivedPacket {
-                                interface_index: r.interface_index,
-                                ethernet_packet: packet,
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        let msg = format!("{}", e);
-                        // `Timed out` error should occur in normal cases as the `read_timeout`
-                        // configuration param is set to `0`.
-                        if &msg != "Timed out" {
-                            panic!("An error occurred while reading: {}", msg);
-                        }
-                    }
-                }
-            }
-        }
-    };
-
-    pin_mut!(stream);
-
     let arp_table = Arc::new(RwLock::new(ArpTable::new()));
+    let (sender_ethernet, receiver_ethernet) = tokio::sync::mpsc::unbounded_channel();
+    let (sender_arp, receiver_arp) = tokio::sync::mpsc::unbounded_channel();
+    let (sender_ipv4, receiver_ipv4) = tokio::sync::mpsc::unbounded_channel();
 
-    let sender_arp = spawn_arp_handler(&interfaces, arp_table.clone()).await;
-    let sender_ipv4 =
-        spawn_ipv4_handler(interfaces.clone(), arp_table.clone(), sender_arp.clone()).await;
+    // Spawn packet handlers.
+    spawn_ethernet_handler(
+        &interfaces,
+        receiver_ethernet,
+        sender_arp.clone(),
+        sender_ipv4.clone(),
+    )
+    .await;
+    spawn_arp_handler(&interfaces, arp_table.clone(), receiver_arp).await;
+    spawn_ipv4_handler(
+        interfaces.clone(),
+        arp_table.clone(),
+        receiver_ipv4,
+        sender_arp.clone(),
+    )
+    .await;
 
-    loop {
-        while let Some(received_packet) = stream.next().await {
-            let interface = interfaces
-                .iter()
-                .find(|&i| i.index == received_packet.interface_index)
-                .expect("should have the network interface");
+    // Block the current thread until a shutdown signal is received.
+    let result = tokio::runtime::Handle::current()
+        .spawn(async {
+            let mut handles = vec![];
 
-            if !should_handle_packet(&received_packet.ethernet_packet, interface) {
-                continue;
+            match signal(SignalKind::terminate()) {
+                Ok(terminate_stream) => {
+                    let terminate = SignalFuture::new(terminate_stream, "Received SIGTERM");
+                    handles.push(terminate);
+                }
+                Err(e) => {} // TODO: error!("Could not register SIGTERM handler: {}", e),
             }
 
-            match received_packet.ethernet_packet.get_ethertype().0 {
-                ETHERNET_TYPE_IP => {
-                    // pnet::packet::ipv4::Ipv4Packet
-                    // https://docs.rs/pnet/latest/pnet/packet/ipv4/struct.Ipv4Packet.html
-                    if let Some(ipv4) =
-                        Ipv4Packet::owned(received_packet.ethernet_packet.packet().to_vec())
-                    {
-                        println!("ip: {:?}", ipv4);
-                        if let Err(e) = sender_ipv4.send(Ipv4HandlerEvent::ReceivedPacket(ipv4)) {
-                            println!("{}", e);
-                        }
-                    } else {
-                        println!("Received a packet whose ETHERNET_TYPE is IP but we couldn't encode it to IPv4 packet.");
-                    }
+            match signal(SignalKind::interrupt()) {
+                Ok(interrupt_stream) => {
+                    let interrupt = SignalFuture::new(interrupt_stream, "Received SIGINT");
+                    handles.push(interrupt);
                 }
-                ETHERNET_TYPE_ARP => {
-                    // pnet::packet::arp::ArpPacket
-                    // https://docs.rs/pnet/latest/pnet/packet/arp/struct.ArpPacket.html
-                    if let Some(arp) =
-                        ArpPacket::owned(received_packet.ethernet_packet.packet().to_vec())
-                    {
-                        println!("arp: {:?}", arp);
-                        if let Err(e) = sender_arp.send(ArpEvent::ReceivedPacket(arp)) {
-                            println!("{}", e);
-                        }
-                    } else {
-                        println!("Received a packet whose ETHERNET_TYPE is ARP but we couldn't encode it to ARP packet.");
-                    }
-                }
-                _ => {}
+                Err(e) => {} // TODO: error!("Could not register SIGINT handler: {}", e),
             }
+
+            futures_util::future::select_all(handles.into_iter()).await
+        })
+        .await;
+
+    match result {
+        Ok(message) => {
+            println!("{:?}. Starting shutdown process...", message.0);
+            sender_ethernet
+                .send(EthernetHandlerEvent::Shutdown)
+                .unwrap();
+            sender_arp.send(ArpHandlerEvent::Shutdown).unwrap();
+            sender_ipv4.send(Ipv4HandlerEvent::Shutdown).unwrap();
         }
+        Err(e) => {}
     }
-}
-
-/// Determine if we handle the packet.
-fn should_handle_packet(
-    ethernet_packet: &pnet_packet::ethernet::EthernetPacket,
-    interface: &NetworkInterface,
-) -> bool {
-    ethernet_packet.get_destination() == interface.mac.expect("should have mac address")
-        || ethernet_packet.get_destination().is_broadcast()
-}
-
-struct Receiver {
-    /// The interface index (operating system specific).
-    interface_index: u32,
-    /// Structure for receiving packets at the data link layer.
-    rx: Box<dyn DataLinkReceiver>,
-}
-
-#[derive(Debug)]
-struct ReceivedPacket {
-    /// The interface index (operating system specific).
-    interface_index: u32,
-    ethernet_packet: pnet_packet::ethernet::EthernetPacket<'static>,
 }
 
 // struct Channel {
@@ -165,3 +90,30 @@ struct ReceivedPacket {
 //     tx: Box<dyn DataLinkSender>,
 //     rx: Box<dyn DataLinkReceiver>,
 // }
+
+// cf. https://github.com/sigp/lighthouse/blob/d9910f96c5f71881b88eec15253b31890bcd28d2/lighthouse/environment/src/lib.rs#L492
+#[cfg(target_family = "unix")]
+pub(crate) struct SignalFuture {
+    signal: Signal,
+    message: &'static str,
+}
+
+#[cfg(target_family = "unix")]
+impl SignalFuture {
+    pub fn new(signal: Signal, message: &'static str) -> SignalFuture {
+        SignalFuture { signal, message }
+    }
+}
+
+#[cfg(target_family = "unix")]
+impl Future for SignalFuture {
+    type Output = Option<&'static str>;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        match self.signal.poll_recv(cx) {
+            Poll::Pending => Poll::Pending,
+            Poll::Ready(Some(_)) => Poll::Ready(Some(self.message)),
+            Poll::Ready(None) => Poll::Ready(None),
+        }
+    }
+}

@@ -1,5 +1,5 @@
+use crate::ethernet::{ETHERNET_ADDRESS_LENGTH, ETHERNET_TYPE_IP};
 use crate::ipv4::IPV4_ADDRESS_LENGTH;
-use crate::{ETHERNET_ADDRESS_LENGTH, ETHERNET_TYPE_IP};
 use ipnetwork::IpNetwork;
 use pnet_datalink::{MacAddr, NetworkInterface};
 use pnet_packet::arp::{Arp, ArpHardwareType, ArpOperation, ArpPacket};
@@ -7,7 +7,7 @@ use pnet_packet::ethernet::EtherType;
 use std::collections::HashMap;
 use std::net::Ipv4Addr;
 use std::sync::{Arc, RwLock};
-use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
+use tokio::sync::mpsc::UnboundedReceiver;
 
 const ARP_HARDWARE_TYPE_ETHERNET: u16 = 0x0001;
 
@@ -40,11 +40,12 @@ impl ArpTable {
 }
 
 #[derive(Debug)]
-pub(crate) enum ArpEvent {
+pub(crate) enum ArpHandlerEvent {
     /// Received an ARP packet.
     ReceivedPacket(ArpPacket<'static>),
     /// An event let ArpHandler to send ARP request.
     SendArpRequest(ArpRequest),
+    Shutdown,
 }
 
 #[derive(Debug)]
@@ -57,7 +58,7 @@ pub(crate) struct ArpRequest {
 struct ArpHandler {
     arp_table: Arc<RwLock<ArpTable>>,
     interfaces: HashMap<Ipv4Addr, NetworkInterface>,
-    receiver: UnboundedReceiver<ArpEvent>,
+    receiver: UnboundedReceiver<ArpHandlerEvent>,
 }
 
 impl ArpHandler {
@@ -66,7 +67,7 @@ impl ArpHandler {
             loop {
                 if let Some(event) = self.receiver.recv().await {
                     match event {
-                        ArpEvent::ReceivedPacket(arp_packet) => {
+                        ArpHandlerEvent::ReceivedPacket(arp_packet) => {
                             match arp_packet.get_operation().0 {
                                 ARP_OPERATION_CODE_REQUEST => {
                                     self.handle_request_packet(arp_packet)
@@ -75,11 +76,12 @@ impl ArpHandler {
                                 other => println!("Unsupported ARP operation code: {}", other),
                             }
                         }
-                        ArpEvent::SendArpRequest(request) => {
+                        ArpHandlerEvent::SendArpRequest(request) => {
                             // https://docs.rs/pnet/latest/pnet/packet/arp/struct.Arp.html
                             let _arp = self.construct_request(request);
                             // TODO: Send the arp request via ethernet handler.
                         }
+                        ArpHandlerEvent::Shutdown => return,
                     }
                 }
             }
@@ -147,9 +149,8 @@ impl ArpHandler {
 pub(crate) async fn spawn_arp_handler(
     interfaces: &Vec<NetworkInterface>,
     arp_table: Arc<RwLock<ArpTable>>,
-) -> UnboundedSender<ArpEvent> {
-    let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
-
+    receiver: UnboundedReceiver<ArpHandlerEvent>,
+) {
     let mut interface_map = HashMap::new();
     for i in interfaces {
         i.ips
@@ -169,6 +170,4 @@ pub(crate) async fn spawn_arp_handler(
         interfaces: interface_map,
     }
     .spawn();
-
-    sender
 }
