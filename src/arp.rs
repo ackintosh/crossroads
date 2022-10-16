@@ -40,7 +40,7 @@ impl ArpTable {
 }
 
 #[derive(Debug)]
-pub(crate) enum ArpEvent {
+pub(crate) enum ArpHandlerEvent {
     /// Received an ARP packet.
     ReceivedPacket(ArpPacket<'static>),
     /// An event let ArpHandler to send ARP request.
@@ -57,7 +57,7 @@ pub(crate) struct ArpRequest {
 struct ArpHandler {
     arp_table: Arc<RwLock<ArpTable>>,
     interfaces: HashMap<Ipv4Addr, NetworkInterface>,
-    receiver: UnboundedReceiver<ArpEvent>,
+    receiver: UnboundedReceiver<ArpHandlerEvent>,
 }
 
 impl ArpHandler {
@@ -66,7 +66,7 @@ impl ArpHandler {
             loop {
                 if let Some(event) = self.receiver.recv().await {
                     match event {
-                        ArpEvent::ReceivedPacket(arp_packet) => {
+                        ArpHandlerEvent::ReceivedPacket(arp_packet) => {
                             match arp_packet.get_operation().0 {
                                 ARP_OPERATION_CODE_REQUEST => {
                                     self.handle_request_packet(arp_packet)
@@ -75,7 +75,7 @@ impl ArpHandler {
                                 other => println!("Unsupported ARP operation code: {}", other),
                             }
                         }
-                        ArpEvent::SendArpRequest(request) => {
+                        ArpHandlerEvent::SendArpRequest(request) => {
                             // https://docs.rs/pnet/latest/pnet/packet/arp/struct.Arp.html
                             let _arp = self.construct_request(request);
                             // TODO: Send the arp request via ethernet handler.
@@ -147,7 +147,7 @@ impl ArpHandler {
 pub(crate) async fn spawn_arp_handler(
     interfaces: &Vec<NetworkInterface>,
     arp_table: Arc<RwLock<ArpTable>>,
-    receiver: UnboundedReceiver<ArpEvent>,
+    receiver: UnboundedReceiver<ArpHandlerEvent>,
 ) {
     let mut interface_map = HashMap::new();
     for i in interfaces {

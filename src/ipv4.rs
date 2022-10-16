@@ -1,4 +1,4 @@
-use crate::arp::{ArpEvent, ArpRequest};
+use crate::arp::{ArpHandlerEvent, ArpRequest};
 use crate::ArpTable;
 use ipnetwork::IpNetwork;
 use pnet_datalink::{MacAddr, NetworkInterface};
@@ -19,7 +19,7 @@ struct Ipv4Handler {
     ipv4_addresses: Vec<Ipv4Addr>,
     arp_table: Arc<RwLock<ArpTable>>,
     receiver: UnboundedReceiver<Ipv4HandlerEvent>,
-    sender_arp: UnboundedSender<ArpEvent>,
+    sender_arp: UnboundedSender<ArpHandlerEvent>,
 }
 
 impl Ipv4Handler {
@@ -27,7 +27,7 @@ impl Ipv4Handler {
         interfaces: Vec<NetworkInterface>,
         arp_table: Arc<RwLock<ArpTable>>,
         receiver: UnboundedReceiver<Ipv4HandlerEvent>,
-        sender_arp: UnboundedSender<ArpEvent>,
+        sender_arp: UnboundedSender<ArpHandlerEvent>,
     ) -> Self {
         let ipv4_addresses = interfaces
             .iter()
@@ -63,7 +63,7 @@ impl Ipv4Handler {
         } else {
             // TODO: Fill the sender mac/ipv4 address with an actual one. Maybe routing table is
             // required to do that.
-            if let Err(e) = self.sender_arp.send(ArpEvent::SendArpRequest(ArpRequest {
+            if let Err(e) = self.sender_arp.send(ArpHandlerEvent::SendArpRequest(ArpRequest {
                 sender_mac_address: MacAddr::zero(),      // TODO
                 sender_ipv4_address: Ipv4Addr::BROADCAST, // TODO
                 target_ipv4_address: packet.get_destination(),
@@ -100,7 +100,7 @@ pub(crate) async fn spawn_ipv4_handler(
     interfaces: Vec<NetworkInterface>,
     arp_table: Arc<RwLock<ArpTable>>,
     receiver: UnboundedReceiver<Ipv4HandlerEvent>,
-    sender_arp: UnboundedSender<ArpEvent>,
+    sender_arp: UnboundedSender<ArpHandlerEvent>,
 ) {
     Ipv4Handler::new(interfaces, arp_table, receiver, sender_arp).spawn();
 }

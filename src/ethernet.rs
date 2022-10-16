@@ -1,4 +1,4 @@
-use crate::arp::ArpEvent;
+use crate::arp::ArpHandlerEvent;
 use crate::ipv4::Ipv4HandlerEvent;
 use async_stream::stream;
 use futures_util::{pin_mut, StreamExt};
@@ -14,12 +14,12 @@ pub(crate) const ETHERNET_TYPE_ARP: u16 = 0x0806;
 
 pub(crate) const ETHERNET_ADDRESS_LENGTH: u8 = 6;
 
-pub(crate) enum EthernetEvent {}
+pub(crate) enum EthernetHandlerEvent {}
 
 pub(crate) async fn spawn_ethernet_handler(
     interfaces: &Vec<NetworkInterface>,
-    receiver: UnboundedReceiver<EthernetEvent>,
-    sender_arp: UnboundedSender<ArpEvent>,
+    receiver: UnboundedReceiver<EthernetHandlerEvent>,
+    sender_arp: UnboundedSender<ArpHandlerEvent>,
     sender_ipv4: UnboundedSender<Ipv4HandlerEvent>,
 ) {
     EthernetHandler {
@@ -33,8 +33,8 @@ pub(crate) async fn spawn_ethernet_handler(
 
 struct EthernetHandler {
     interfaces: Vec<NetworkInterface>,
-    receiver: UnboundedReceiver<EthernetEvent>,
-    sender_arp: UnboundedSender<ArpEvent>,
+    receiver: UnboundedReceiver<EthernetHandlerEvent>,
+    sender_arp: UnboundedSender<ArpHandlerEvent>,
     sender_ipv4: UnboundedSender<Ipv4HandlerEvent>,
 }
 
@@ -148,7 +148,7 @@ impl EthernetHandler {
                                 ArpPacket::owned(received_packet.ethernet_packet.packet().to_vec())
                             {
                                 println!("arp: {:?}", arp);
-                                if let Err(e) = self.sender_arp.send(ArpEvent::ReceivedPacket(arp))
+                                if let Err(e) = self.sender_arp.send(ArpHandlerEvent::ReceivedPacket(arp))
                                 {
                                     println!("{}", e);
                                 }
