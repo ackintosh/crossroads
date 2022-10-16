@@ -1,11 +1,12 @@
 mod arp;
 mod ipv4;
 
-use crate::arp::ArpTable;
+use crate::arp::{spawn_arp_handler, ArpEvent, ArpTable};
 use crate::ipv4::{spawn_ipv4_handler, Ipv4HandlerEvent};
 use async_stream::stream;
 use futures_util::{pin_mut, StreamExt};
 use pnet_datalink::{Config, DataLinkReceiver, NetworkInterface};
+use pnet_packet::arp::ArpPacket;
 use pnet_packet::ipv4::Ipv4Packet;
 use pnet_packet::Packet;
 use std::sync::{Arc, RwLock};
@@ -13,6 +14,8 @@ use std::time::Duration;
 
 const ETHERNET_TYPE_IP: u16 = 0x0800;
 const ETHERNET_TYPE_ARP: u16 = 0x0806;
+
+const ETHERNET_ADDRESS_LENGTH: u8 = 6;
 
 #[tokio::main]
 async fn main() {
@@ -84,7 +87,9 @@ async fn main() {
 
     let arp_table = Arc::new(RwLock::new(ArpTable::new()));
 
-    let sender_ipv4 = spawn_ipv4_handler(interfaces.clone(), arp_table.clone()).await;
+    let sender_arp = spawn_arp_handler(&interfaces, arp_table.clone()).await;
+    let sender_ipv4 =
+        spawn_ipv4_handler(interfaces.clone(), arp_table.clone(), sender_arp.clone()).await;
 
     loop {
         while let Some(received_packet) = stream.next().await {
@@ -113,7 +118,18 @@ async fn main() {
                     }
                 }
                 ETHERNET_TYPE_ARP => {
-                    println!("arp");
+                    // pnet::packet::arp::ArpPacket
+                    // https://docs.rs/pnet/latest/pnet/packet/arp/struct.ArpPacket.html
+                    if let Some(arp) =
+                        ArpPacket::owned(received_packet.ethernet_packet.packet().to_vec())
+                    {
+                        println!("arp: {:?}", arp);
+                        if let Err(e) = sender_arp.send(ArpEvent::ReceivedPacket(arp)) {
+                            println!("{}", e);
+                        }
+                    } else {
+                        println!("Received a packet whose ETHERNET_TYPE is ARP but we couldn't encode it to ARP packet.");
+                    }
                 }
                 _ => {}
             }
