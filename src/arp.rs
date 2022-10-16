@@ -1,5 +1,5 @@
+use crate::ethernet::{ETHERNET_ADDRESS_LENGTH, ETHERNET_TYPE_IP};
 use crate::ipv4::IPV4_ADDRESS_LENGTH;
-use crate::{ETHERNET_ADDRESS_LENGTH, ETHERNET_TYPE_IP};
 use ipnetwork::IpNetwork;
 use pnet_datalink::{MacAddr, NetworkInterface};
 use pnet_packet::arp::{Arp, ArpHardwareType, ArpOperation, ArpPacket};
@@ -7,7 +7,7 @@ use pnet_packet::ethernet::EtherType;
 use std::collections::HashMap;
 use std::net::Ipv4Addr;
 use std::sync::{Arc, RwLock};
-use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
+use tokio::sync::mpsc::UnboundedReceiver;
 
 const ARP_HARDWARE_TYPE_ETHERNET: u16 = 0x0001;
 
@@ -147,9 +147,8 @@ impl ArpHandler {
 pub(crate) async fn spawn_arp_handler(
     interfaces: &Vec<NetworkInterface>,
     arp_table: Arc<RwLock<ArpTable>>,
-) -> UnboundedSender<ArpEvent> {
-    let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
-
+    receiver: UnboundedReceiver<ArpEvent>,
+) {
     let mut interface_map = HashMap::new();
     for i in interfaces {
         i.ips
@@ -169,6 +168,4 @@ pub(crate) async fn spawn_arp_handler(
         interfaces: interface_map,
     }
     .spawn();
-
-    sender
 }

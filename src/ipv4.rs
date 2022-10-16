@@ -99,10 +99,8 @@ impl Ipv4Handler {
 pub(crate) async fn spawn_ipv4_handler(
     interfaces: Vec<NetworkInterface>,
     arp_table: Arc<RwLock<ArpTable>>,
+    receiver: UnboundedReceiver<Ipv4HandlerEvent>,
     sender_arp: UnboundedSender<ArpEvent>,
-) -> UnboundedSender<Ipv4HandlerEvent> {
-    let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
+) {
     Ipv4Handler::new(interfaces, arp_table, receiver, sender_arp).spawn();
-
-    sender
 }
