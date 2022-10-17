@@ -44,7 +44,7 @@ async fn main() {
     info!("*** Detected network interfaces ***");
     info!("***********************************");
     for i in &interfaces {
-        info!("{:?}", i);
+        info!("* {:?}", i);
     }
 
     let arp_table = Arc::new(RwLock::new(ArpTable::new()));
