@@ -57,6 +57,32 @@ pub(crate) struct ArpRequest {
     pub(crate) target_ipv4_address: Ipv4Addr,
 }
 
+pub(crate) async fn spawn_arp_handler(
+    interfaces: &Vec<NetworkInterface>,
+    arp_table: Arc<RwLock<ArpTable>>,
+    receiver: UnboundedReceiver<ArpHandlerEvent>,
+) -> JoinHandle<()> {
+    let mut interface_map = HashMap::new();
+    for i in interfaces {
+        i.ips
+            .iter()
+            .filter_map(|ipn| match ipn {
+                IpNetwork::V4(ipv4n) => Some(ipv4n.ip()),
+                IpNetwork::V6(_) => None,
+            })
+            .for_each(|ipv4| {
+                interface_map.insert(ipv4, i.clone());
+            });
+    }
+
+    ArpHandler {
+        arp_table,
+        receiver,
+        interfaces: interface_map,
+    }
+    .spawn()
+}
+
 struct ArpHandler {
     arp_table: Arc<RwLock<ArpTable>>,
     interfaces: HashMap<Ipv4Addr, NetworkInterface>,
@@ -148,30 +174,4 @@ impl ArpHandler {
             payload: vec![],
         }
     }
-}
-
-pub(crate) async fn spawn_arp_handler(
-    interfaces: &Vec<NetworkInterface>,
-    arp_table: Arc<RwLock<ArpTable>>,
-    receiver: UnboundedReceiver<ArpHandlerEvent>,
-) -> JoinHandle<()> {
-    let mut interface_map = HashMap::new();
-    for i in interfaces {
-        i.ips
-            .iter()
-            .filter_map(|ipn| match ipn {
-                IpNetwork::V4(ipv4n) => Some(ipv4n.ip()),
-                IpNetwork::V6(_) => None,
-            })
-            .for_each(|ipv4| {
-                interface_map.insert(ipv4, i.clone());
-            });
-    }
-
-    ArpHandler {
-        arp_table,
-        receiver,
-        interfaces: interface_map,
-    }
-    .spawn()
 }

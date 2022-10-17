@@ -11,6 +11,15 @@ use tracing::{debug, error};
 
 pub(crate) const IPV4_ADDRESS_LENGTH: u8 = 4;
 
+pub(crate) async fn spawn_ipv4_handler(
+    interfaces: Vec<NetworkInterface>,
+    arp_table: Arc<RwLock<ArpTable>>,
+    receiver: UnboundedReceiver<Ipv4HandlerEvent>,
+    sender_arp: UnboundedSender<ArpHandlerEvent>,
+) -> JoinHandle<()> {
+    Ipv4Handler::new(interfaces, arp_table, receiver, sender_arp).spawn()
+}
+
 #[derive(Debug)]
 pub(crate) enum Ipv4HandlerEvent {
     ReceivedPacket(Ipv4Packet<'static>),
@@ -102,13 +111,4 @@ impl Ipv4Handler {
 
         tokio::runtime::Handle::current().spawn(fut)
     }
-}
-
-pub(crate) async fn spawn_ipv4_handler(
-    interfaces: Vec<NetworkInterface>,
-    arp_table: Arc<RwLock<ArpTable>>,
-    receiver: UnboundedReceiver<Ipv4HandlerEvent>,
-    sender_arp: UnboundedSender<ArpHandlerEvent>,
-) -> JoinHandle<()> {
-    Ipv4Handler::new(interfaces, arp_table, receiver, sender_arp).spawn()
 }
