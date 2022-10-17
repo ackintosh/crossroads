@@ -96,7 +96,10 @@ async fn main() {
         .unwrap();
 
     // TODO: Graceful shutdown on each handlers.
-    info!("{:?}. Starting shutdown process...", message.0);
+    info!(
+        "{:?}. Starting shutdown process...",
+        message.0.unwrap_or("Received a signal")
+    );
     sender_ethernet
         .send(EthernetHandlerEvent::Shutdown)
         .unwrap();
