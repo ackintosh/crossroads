@@ -11,18 +11,40 @@ use std::pin::Pin;
 use std::sync::{Arc, RwLock};
 use std::task::{Context, Poll};
 use tokio::signal::unix::{signal, Signal, SignalKind};
+use tracing::{error, info};
 
 #[tokio::main]
 async fn main() {
+    if let Ok(env_filter) = tracing_subscriber::EnvFilter::try_from_default_env() {
+        tracing_subscriber::fmt().with_env_filter(env_filter).init();
+    } else {
+        tracing_subscriber::fmt().init();
+    }
+
+    info!("                                    /////////                                         ");
+    info!("                                    /////////                                         ");
+    info!("                                    /////////                                         ");
+    info!("//////////////////////////////////////////////////////////////////////////////////////");
+    info!(
+        "////////////////////////////// Crossroads v{} /////////////////////////////////////",
+        env!("CARGO_PKG_VERSION")
+    );
+    info!("//////////////////////////////////////////////////////////////////////////////////////");
+    info!("                                    /////////                                         ");
+    info!("                                    /////////                                         ");
+    info!("                                    /////////                                         ");
+
     let interfaces: Vec<NetworkInterface> = pnet_datalink::interfaces()
         .iter()
         .filter(|i| i.mac.is_some() && !i.mac.unwrap().is_zero())
         .cloned()
         .collect();
 
-    println!("*** Detected network interfaces ***");
+    info!("***********************************");
+    info!("*** Detected network interfaces ***");
+    info!("***********************************");
     for i in &interfaces {
-        println!("{:?}", i);
+        info!("{:?}", i);
     }
 
     let arp_table = Arc::new(RwLock::new(ArpTable::new()));
@@ -48,7 +70,7 @@ async fn main() {
     .await;
 
     // Block the current thread until a shutdown signal is received.
-    let result = tokio::runtime::Handle::current()
+    let message = tokio::runtime::Handle::current()
         .spawn(async {
             let mut handles = vec![];
 
@@ -57,7 +79,7 @@ async fn main() {
                     let terminate = SignalFuture::new(terminate_stream, "Received SIGTERM");
                     handles.push(terminate);
                 }
-                Err(e) => {} // TODO: error!("Could not register SIGTERM handler: {}", e),
+                Err(e) => error!("Could not register SIGTERM handler: {}", e),
             }
 
             match signal(SignalKind::interrupt()) {
@@ -65,28 +87,35 @@ async fn main() {
                     let interrupt = SignalFuture::new(interrupt_stream, "Received SIGINT");
                     handles.push(interrupt);
                 }
-                Err(e) => {} // TODO: error!("Could not register SIGINT handler: {}", e),
+                Err(e) => error!("Could not register SIGINT handler: {}", e),
             }
 
             futures_util::future::select_all(handles.into_iter()).await
         })
-        .await;
+        .await
+        .unwrap();
 
-    match result {
-        Ok(message) => {
-            println!("{:?}. Starting shutdown process...", message.0);
-            sender_ethernet
-                .send(EthernetHandlerEvent::Shutdown)
-                .unwrap();
-            sender_arp.send(ArpHandlerEvent::Shutdown).unwrap();
-            sender_ipv4.send(Ipv4HandlerEvent::Shutdown).unwrap();
+    // TODO: Graceful shutdown on each handlers.
+    info!("{:?}. Starting shutdown process...", message.0);
+    sender_ethernet
+        .send(EthernetHandlerEvent::Shutdown)
+        .unwrap();
+    sender_arp.send(ArpHandlerEvent::Shutdown).unwrap();
+    sender_ipv4.send(Ipv4HandlerEvent::Shutdown).unwrap();
 
-            // TODO: Graceful shutdown on each handlers.
-            futures_util::join!(jh_ethernet, jh_arp, jh_ipv4);
-            println!("done.")
-        }
-        Err(e) => {}
+    macro_rules! log_if_error {
+        ($result:expr) => {
+            if let Err(e) = $result {
+                error!("{:?}", e);
+            }
+        };
     }
+    let (eth, arp, ipv4) = futures_util::join!(jh_ethernet, jh_arp, jh_ipv4);
+    log_if_error!(eth);
+    log_if_error!(arp);
+    log_if_error!(ipv4);
+
+    info!("Done.");
 }
 
 // struct Channel {

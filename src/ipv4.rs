@@ -7,6 +7,7 @@ use std::net::Ipv4Addr;
 use std::sync::{Arc, RwLock};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tokio::task::JoinHandle;
+use tracing::{debug, error};
 
 pub(crate) const IPV4_ADDRESS_LENGTH: u8 = 4;
 
@@ -51,7 +52,7 @@ impl Ipv4Handler {
 
     fn handle_received_packet(&self, packet: Ipv4Packet) {
         if self.determine_if_ours(&packet) {
-            println!("TODO");
+            // TODO
             return;
         }
 
@@ -73,7 +74,7 @@ impl Ipv4Handler {
                     target_ipv4_address: packet.get_destination(),
                 }))
             {
-                println!("Failed to send ArpRequest to ArpHandler: {:?}", e);
+                error!("Failed to send the ArpRequest to ArpHandler: {:?}", e);
             }
         }
     }
@@ -84,8 +85,9 @@ impl Ipv4Handler {
     }
 
     fn spawn(mut self) -> JoinHandle<()> {
-        println!("Ipv4Handler started");
         let fut = async move {
+            debug!("Started Ipv4Handler");
+
             loop {
                 if let Some(event) = self.receiver.recv().await {
                     match event {

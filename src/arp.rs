@@ -9,6 +9,7 @@ use std::net::Ipv4Addr;
 use std::sync::{Arc, RwLock};
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::task::JoinHandle;
+use tracing::debug;
 
 const ARP_HARDWARE_TYPE_ETHERNET: u16 = 0x0001;
 
@@ -32,7 +33,7 @@ impl ArpTable {
 
     pub(crate) fn put(&mut self, ipv4: Ipv4Addr, mac: MacAddr) {
         if let Some(old) = self.entries.insert(ipv4, mac) {
-            println!(
+            debug!(
                 "Replaced ARP table. ipv4: {}, old_mac: {}, new_mac: {}",
                 ipv4, mac, old
             );
@@ -65,6 +66,8 @@ struct ArpHandler {
 impl ArpHandler {
     fn spawn(mut self) -> JoinHandle<()> {
         let fut = async move {
+            debug!("Started ArpHandler");
+
             loop {
                 if let Some(event) = self.receiver.recv().await {
                     match event {
@@ -74,7 +77,7 @@ impl ArpHandler {
                                     self.handle_request_packet(arp_packet)
                                 }
                                 // TODO: Handle ARP response operation
-                                other => println!("Unsupported ARP operation code: {}", other),
+                                other => debug!("Unsupported ARP operation code: {}", other),
                             }
                         }
                         ArpHandlerEvent::SendArpRequest(request) => {
