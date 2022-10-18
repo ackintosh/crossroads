@@ -8,6 +8,8 @@ use std::collections::HashMap;
 use std::net::Ipv4Addr;
 use std::sync::{Arc, RwLock};
 use tokio::sync::mpsc::UnboundedReceiver;
+use tokio::task::JoinHandle;
+use tracing::debug;
 
 const ARP_HARDWARE_TYPE_ETHERNET: u16 = 0x0001;
 
@@ -31,7 +33,7 @@ impl ArpTable {
 
     pub(crate) fn put(&mut self, ipv4: Ipv4Addr, mac: MacAddr) {
         if let Some(old) = self.entries.insert(ipv4, mac) {
-            println!(
+            debug!(
                 "Replaced ARP table. ipv4: {}, old_mac: {}, new_mac: {}",
                 ipv4, mac, old
             );
@@ -55,6 +57,32 @@ pub(crate) struct ArpRequest {
     pub(crate) target_ipv4_address: Ipv4Addr,
 }
 
+pub(crate) async fn spawn_arp_handler(
+    interfaces: &Vec<NetworkInterface>,
+    arp_table: Arc<RwLock<ArpTable>>,
+    receiver: UnboundedReceiver<ArpHandlerEvent>,
+) -> JoinHandle<()> {
+    let mut interface_map = HashMap::new();
+    for i in interfaces {
+        i.ips
+            .iter()
+            .filter_map(|ipn| match ipn {
+                IpNetwork::V4(ipv4n) => Some(ipv4n.ip()),
+                IpNetwork::V6(_) => None,
+            })
+            .for_each(|ipv4| {
+                interface_map.insert(ipv4, i.clone());
+            });
+    }
+
+    ArpHandler {
+        arp_table,
+        receiver,
+        interfaces: interface_map,
+    }
+    .spawn()
+}
+
 struct ArpHandler {
     arp_table: Arc<RwLock<ArpTable>>,
     interfaces: HashMap<Ipv4Addr, NetworkInterface>,
@@ -62,8 +90,10 @@ struct ArpHandler {
 }
 
 impl ArpHandler {
-    fn spawn(mut self) {
+    fn spawn(mut self) -> JoinHandle<()> {
         let fut = async move {
+            debug!("Started ArpHandler");
+
             loop {
                 if let Some(event) = self.receiver.recv().await {
                     match event {
@@ -73,7 +103,7 @@ impl ArpHandler {
                                     self.handle_request_packet(arp_packet)
                                 }
                                 // TODO: Handle ARP response operation
-                                other => println!("Unsupported ARP operation code: {}", other),
+                                other => debug!("Unsupported ARP operation code: {}", other),
                             }
                         }
                         ArpHandlerEvent::SendArpRequest(request) => {
@@ -87,7 +117,7 @@ impl ArpHandler {
             }
         };
 
-        tokio::runtime::Handle::current().spawn(fut);
+        tokio::runtime::Handle::current().spawn(fut)
     }
 
     fn handle_request_packet(&self, packet: ArpPacket<'static>) {
@@ -144,30 +174,4 @@ impl ArpHandler {
             payload: vec![],
         }
     }
-}
-
-pub(crate) async fn spawn_arp_handler(
-    interfaces: &Vec<NetworkInterface>,
-    arp_table: Arc<RwLock<ArpTable>>,
-    receiver: UnboundedReceiver<ArpHandlerEvent>,
-) {
-    let mut interface_map = HashMap::new();
-    for i in interfaces {
-        i.ips
-            .iter()
-            .filter_map(|ipn| match ipn {
-                IpNetwork::V4(ipv4n) => Some(ipv4n.ip()),
-                IpNetwork::V6(_) => None,
-            })
-            .for_each(|ipv4| {
-                interface_map.insert(ipv4, i.clone());
-            });
-    }
-
-    ArpHandler {
-        arp_table,
-        receiver,
-        interfaces: interface_map,
-    }
-    .spawn();
 }

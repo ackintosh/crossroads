@@ -6,8 +6,19 @@ use pnet_packet::ipv4::Ipv4Packet;
 use std::net::Ipv4Addr;
 use std::sync::{Arc, RwLock};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
+use tokio::task::JoinHandle;
+use tracing::{debug, error};
 
 pub(crate) const IPV4_ADDRESS_LENGTH: u8 = 4;
+
+pub(crate) async fn spawn_ipv4_handler(
+    interfaces: Vec<NetworkInterface>,
+    arp_table: Arc<RwLock<ArpTable>>,
+    receiver: UnboundedReceiver<Ipv4HandlerEvent>,
+    sender_arp: UnboundedSender<ArpHandlerEvent>,
+) -> JoinHandle<()> {
+    Ipv4Handler::new(interfaces, arp_table, receiver, sender_arp).spawn()
+}
 
 #[derive(Debug)]
 pub(crate) enum Ipv4HandlerEvent {
@@ -50,7 +61,7 @@ impl Ipv4Handler {
 
     fn handle_received_packet(&self, packet: Ipv4Packet) {
         if self.determine_if_ours(&packet) {
-            println!("TODO");
+            // TODO
             return;
         }
 
@@ -72,7 +83,7 @@ impl Ipv4Handler {
                     target_ipv4_address: packet.get_destination(),
                 }))
             {
-                println!("Failed to send ArpRequest to ArpHandler: {:?}", e);
+                error!("Failed to send the ArpRequest to ArpHandler: {:?}", e);
             }
         }
     }
@@ -82,9 +93,10 @@ impl Ipv4Handler {
         self.ipv4_addresses.contains(&dest) || dest.is_broadcast()
     }
 
-    fn spawn(mut self) {
-        println!("Ipv4Handler started");
+    fn spawn(mut self) -> JoinHandle<()> {
         let fut = async move {
+            debug!("Started Ipv4Handler");
+
             loop {
                 if let Some(event) = self.receiver.recv().await {
                     match event {
@@ -97,15 +109,6 @@ impl Ipv4Handler {
             }
         };
 
-        tokio::runtime::Handle::current().spawn(fut);
+        tokio::runtime::Handle::current().spawn(fut)
     }
-}
-
-pub(crate) async fn spawn_ipv4_handler(
-    interfaces: Vec<NetworkInterface>,
-    arp_table: Arc<RwLock<ArpTable>>,
-    receiver: UnboundedReceiver<Ipv4HandlerEvent>,
-    sender_arp: UnboundedSender<ArpHandlerEvent>,
-) {
-    Ipv4Handler::new(interfaces, arp_table, receiver, sender_arp).spawn();
 }

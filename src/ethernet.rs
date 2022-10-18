@@ -9,6 +9,8 @@ use pnet_packet::Packet;
 use std::time::Duration;
 use tokio::select;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
+use tokio::task::JoinHandle;
+use tracing::{debug, error};
 
 pub(crate) const ETHERNET_TYPE_IP: u16 = 0x0800;
 pub(crate) const ETHERNET_TYPE_ARP: u16 = 0x0806;
@@ -21,18 +23,18 @@ pub(crate) enum EthernetHandlerEvent {
 }
 
 pub(crate) async fn spawn_ethernet_handler(
-    interfaces: &Vec<NetworkInterface>,
+    interfaces: &[NetworkInterface],
     receiver: UnboundedReceiver<EthernetHandlerEvent>,
     sender_arp: UnboundedSender<ArpHandlerEvent>,
     sender_ipv4: UnboundedSender<Ipv4HandlerEvent>,
-) {
+) -> JoinHandle<()> {
     EthernetHandler {
-        interfaces: interfaces.clone(),
+        interfaces: interfaces.to_owned(),
         receiver,
         sender_arp,
         sender_ipv4,
     }
-    .spawn();
+    .spawn()
 }
 
 struct EthernetHandler {
@@ -57,7 +59,7 @@ struct ReceivedPacket {
 }
 
 impl EthernetHandler {
-    fn spawn(mut self) {
+    fn spawn(mut self) -> JoinHandle<()> {
         let config = Config {
             // Specifying read timeout to be `0` in order to let the receiver have non-blocking behavior.
             // https://github.com/libpnet/libpnet/issues/343#issuecomment-406866437
@@ -116,6 +118,8 @@ impl EthernetHandler {
             pin_mut!(stream);
 
             loop {
+                debug!("Started EthernetHandler");
+
                 select! {
                     received_packet = stream.select_next_some() => {
                         let interface = self
@@ -135,15 +139,16 @@ impl EthernetHandler {
                                 if let Some(ipv4) =
                                     Ipv4Packet::owned(received_packet.ethernet_packet.packet().to_vec())
                                 {
-                                    println!("ip: {:?}", ipv4);
+                                    debug!("Received an IP packet: {:?}", ipv4);
+
                                     if let Err(e) = self
                                         .sender_ipv4
                                         .send(Ipv4HandlerEvent::ReceivedPacket(ipv4))
                                     {
-                                        println!("{}", e);
+                                        error!("Failed to send the IP packet to Ipv4Handler: {}", e);
                                     }
                                 } else {
-                                    println!("Received a packet whose ETHERNET_TYPE is IP but we couldn't encode it to IPv4 packet.");
+                                    error!("Received a packet whose ETHERNET_TYPE is IP but we couldn't encode it to IPv4 packet.");
                                 }
                             }
                             ETHERNET_TYPE_ARP => {
@@ -152,13 +157,14 @@ impl EthernetHandler {
                                 if let Some(arp) =
                                     ArpPacket::owned(received_packet.ethernet_packet.packet().to_vec())
                                 {
-                                    println!("arp: {:?}", arp);
+                                    debug!("Received an ARP packet: {:?}", arp);
+
                                     if let Err(e) = self.sender_arp.send(ArpHandlerEvent::ReceivedPacket(arp))
                                     {
-                                        println!("{}", e);
+                                        error!("Failed to send the ARP packet to ArpHandler: {}", e);
                                     }
                                 } else {
-                                    println!("Received a packet whose ETHERNET_TYPE is ARP but we couldn't encode it to ARP packet.");
+                                    error!("Received a packet whose ETHERNET_TYPE is ARP but we couldn't encode it to ARP packet.");
                                 }
                             }
                             _ => {}
@@ -173,7 +179,7 @@ impl EthernetHandler {
             }
         };
 
-        tokio::runtime::Handle::current().spawn(fut);
+        tokio::runtime::Handle::current().spawn(fut)
     }
 
     /// Determine if we handle the packet.
