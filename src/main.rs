@@ -60,7 +60,13 @@ async fn main() {
         sender_ipv4.clone(),
     )
     .await;
-    let jh_arp = spawn_arp_handler(&interfaces, arp_table.clone(), receiver_arp).await;
+    let jh_arp = spawn_arp_handler(
+        &interfaces,
+        arp_table.clone(),
+        receiver_arp,
+        sender_ethernet.clone(),
+    )
+    .await;
     let jh_ipv4 = spawn_ipv4_handler(
         interfaces.clone(),
         arp_table.clone(),

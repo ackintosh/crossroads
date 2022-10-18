@@ -4,6 +4,7 @@ use async_stream::stream;
 use futures_util::{pin_mut, StreamExt};
 use pnet_datalink::{Config, DataLinkReceiver, NetworkInterface};
 use pnet_packet::arp::ArpPacket;
+use pnet_packet::ethernet::Ethernet;
 use pnet_packet::ipv4::Ipv4Packet;
 use pnet_packet::Packet;
 use std::time::Duration;
@@ -19,6 +20,7 @@ pub(crate) const ETHERNET_ADDRESS_LENGTH: u8 = 6;
 
 #[derive(Debug)]
 pub(crate) enum EthernetHandlerEvent {
+    SendPacket(Ethernet),
     Shutdown,
 }
 
@@ -172,6 +174,8 @@ impl EthernetHandler {
                     }
                     Some(event) = self.receiver.recv() => {
                         match event {
+                            EthernetHandlerEvent::SendPacket(ethernet) => {
+                            }
                             EthernetHandlerEvent::Shutdown => return,
                         }
                     }

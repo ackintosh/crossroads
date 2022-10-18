@@ -1,15 +1,17 @@
-use crate::ethernet::{ETHERNET_ADDRESS_LENGTH, ETHERNET_TYPE_IP};
+use crate::ethernet::{ETHERNET_ADDRESS_LENGTH, ETHERNET_TYPE_ARP, ETHERNET_TYPE_IP};
 use crate::ipv4::IPV4_ADDRESS_LENGTH;
+use crate::EthernetHandlerEvent;
 use ipnetwork::IpNetwork;
 use pnet_datalink::{MacAddr, NetworkInterface};
-use pnet_packet::arp::{Arp, ArpHardwareType, ArpOperation, ArpPacket};
-use pnet_packet::ethernet::EtherType;
+use pnet_packet::arp::{Arp, ArpHardwareType, ArpOperation, ArpPacket, MutableArpPacket};
+use pnet_packet::ethernet::{EtherType, Ethernet};
+use pnet_packet::Packet;
 use std::collections::HashMap;
 use std::net::Ipv4Addr;
 use std::sync::{Arc, RwLock};
-use tokio::sync::mpsc::UnboundedReceiver;
+use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tokio::task::JoinHandle;
-use tracing::debug;
+use tracing::{debug, error};
 
 const ARP_HARDWARE_TYPE_ETHERNET: u16 = 0x0001;
 
@@ -61,6 +63,7 @@ pub(crate) async fn spawn_arp_handler(
     interfaces: &Vec<NetworkInterface>,
     arp_table: Arc<RwLock<ArpTable>>,
     receiver: UnboundedReceiver<ArpHandlerEvent>,
+    sender_ethernet: UnboundedSender<EthernetHandlerEvent>,
 ) -> JoinHandle<()> {
     let mut interface_map = HashMap::new();
     for i in interfaces {
@@ -79,6 +82,7 @@ pub(crate) async fn spawn_arp_handler(
         arp_table,
         receiver,
         interfaces: interface_map,
+        sender_ethernet,
     }
     .spawn()
 }
@@ -87,6 +91,7 @@ struct ArpHandler {
     arp_table: Arc<RwLock<ArpTable>>,
     interfaces: HashMap<Ipv4Addr, NetworkInterface>,
     receiver: UnboundedReceiver<ArpHandlerEvent>,
+    sender_ethernet: UnboundedSender<EthernetHandlerEvent>,
 }
 
 impl ArpHandler {
@@ -129,12 +134,25 @@ impl ArpHandler {
 
         // Determine if the packet is ours.
         if let Some(interface) = self.interfaces.get(&packet.get_target_proto_addr()) {
-            let _reply = self.construct_reply(
-                interface.mac.expect("should have mac address"),
-                packet.get_target_proto_addr(),
-                packet.get_sender_hw_addr(),
-                packet.get_sender_proto_addr(),
-            );
+            if let Err(e) = self
+                .sender_ethernet
+                .send(EthernetHandlerEvent::SendPacket(Ethernet {
+                    destination: packet.get_sender_hw_addr(),
+                    source: interface.mac.expect("should have mac address"),
+                    ethertype: EtherType(ETHERNET_TYPE_ARP),
+                    payload: construct_reply_packet(
+                        interface.mac.expect("should have mac address"),
+                        packet.get_target_proto_addr(),
+                        packet.get_sender_hw_addr(),
+                        packet.get_sender_proto_addr(),
+                    ),
+                }))
+            {
+                error!(
+                    "Failed to send an Ethernet packet to EthernetHandler: {}",
+                    e
+                );
+            }
             // TODO: Send the arp reply via ethernet handler.
         }
     }
@@ -153,25 +171,34 @@ impl ArpHandler {
             payload: vec![],
         }
     }
+}
 
-    fn construct_reply(
-        &self,
-        sender_mac_address: MacAddr,
-        sender_ipv4_address: Ipv4Addr,
-        target_mac_address: MacAddr,
-        target_ipv4_address: Ipv4Addr,
-    ) -> Arp {
-        Arp {
-            hardware_type: ArpHardwareType(ARP_HARDWARE_TYPE_ETHERNET),
-            protocol_type: EtherType(ETHERNET_TYPE_IP),
-            hw_addr_len: ETHERNET_ADDRESS_LENGTH,
-            proto_addr_len: IPV4_ADDRESS_LENGTH,
-            operation: ArpOperation(ARP_OPERATION_CODE_REPLY),
-            sender_hw_addr: sender_mac_address,
-            sender_proto_addr: sender_ipv4_address,
-            target_hw_addr: target_mac_address,
-            target_proto_addr: target_ipv4_address,
-            payload: vec![],
-        }
-    }
+fn construct_reply_packet(
+    sender_mac_address: MacAddr,
+    sender_ipv4_address: Ipv4Addr,
+    target_mac_address: MacAddr,
+    target_ipv4_address: Ipv4Addr,
+) -> Vec<u8> {
+    let arp = Arp {
+        hardware_type: ArpHardwareType(ARP_HARDWARE_TYPE_ETHERNET),
+        protocol_type: EtherType(ETHERNET_TYPE_IP),
+        hw_addr_len: ETHERNET_ADDRESS_LENGTH,
+        proto_addr_len: IPV4_ADDRESS_LENGTH,
+        operation: ArpOperation(ARP_OPERATION_CODE_REPLY),
+        sender_hw_addr: sender_mac_address,
+        sender_proto_addr: sender_ipv4_address,
+        target_hw_addr: target_mac_address,
+        target_proto_addr: target_ipv4_address,
+        payload: vec![],
+    };
+
+    struct_to_packet(&arp)
+}
+
+fn struct_to_packet(arp: &Arp) -> Vec<u8> {
+    let size: usize = MutableArpPacket::packet_size(arp);
+    let mut arp_packet = MutableArpPacket::owned(vec![0; size])
+        .expect("the size is greater than or equal the minimum required packet size.");
+    arp_packet.populate(arp);
+    arp_packet.packet().to_vec()
 }
