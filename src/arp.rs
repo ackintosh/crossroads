@@ -134,28 +134,25 @@ impl ArpHandler {
 
         // Determine if the packet is ours.
         if let Some(interface) = self.interfaces.get(&packet.get_target_proto_addr()) {
-            if let Err(e) = self
-                .sender_ethernet
-                .send(EthernetHandlerEvent::SendPacket(
-                    interface.index,
-                    Ethernet {
-                        destination: packet.get_sender_hw_addr(),
-                        source: interface.mac.expect("should have mac address"),
-                        ethertype: EtherType(ETHERNET_TYPE_ARP),
-                        payload: construct_reply_packet_payload(
-                            interface.mac.expect("should have mac address"),
-                            packet.get_target_proto_addr(),
-                            packet.get_sender_hw_addr(),
-                            packet.get_sender_proto_addr(),
-                        ),
-                    }))
-            {
+            if let Err(e) = self.sender_ethernet.send(EthernetHandlerEvent::SendPacket(
+                interface.index,
+                Ethernet {
+                    destination: packet.get_sender_hw_addr(),
+                    source: interface.mac.expect("should have mac address"),
+                    ethertype: EtherType(ETHERNET_TYPE_ARP),
+                    payload: construct_reply_packet_payload(
+                        interface.mac.expect("should have mac address"),
+                        packet.get_target_proto_addr(),
+                        packet.get_sender_hw_addr(),
+                        packet.get_sender_proto_addr(),
+                    ),
+                },
+            )) {
                 error!(
                     "Failed to send an Ethernet packet to EthernetHandler: {}",
                     e
                 );
             }
-            // TODO: Send the arp reply via ethernet handler.
         }
     }
 
