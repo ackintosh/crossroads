@@ -8,9 +8,18 @@
 
 </div>
 
+## How to play with this
 
+### Network topology provided by this repo
+
+TODO
+
+### Construct the topology
 
 ```shell
 docker-compose run --rm dev
 ```
 
+### Running `crossroads`
+
+TODO
