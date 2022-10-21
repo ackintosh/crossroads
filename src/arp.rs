@@ -136,17 +136,19 @@ impl ArpHandler {
         if let Some(interface) = self.interfaces.get(&packet.get_target_proto_addr()) {
             if let Err(e) = self
                 .sender_ethernet
-                .send(EthernetHandlerEvent::SendPacket(Ethernet {
-                    destination: packet.get_sender_hw_addr(),
-                    source: interface.mac.expect("should have mac address"),
-                    ethertype: EtherType(ETHERNET_TYPE_ARP),
-                    payload: construct_reply_packet(
-                        interface.mac.expect("should have mac address"),
-                        packet.get_target_proto_addr(),
-                        packet.get_sender_hw_addr(),
-                        packet.get_sender_proto_addr(),
-                    ),
-                }))
+                .send(EthernetHandlerEvent::SendPacket(
+                    interface.index,
+                    Ethernet {
+                        destination: packet.get_sender_hw_addr(),
+                        source: interface.mac.expect("should have mac address"),
+                        ethertype: EtherType(ETHERNET_TYPE_ARP),
+                        payload: construct_reply_packet_payload(
+                            interface.mac.expect("should have mac address"),
+                            packet.get_target_proto_addr(),
+                            packet.get_sender_hw_addr(),
+                            packet.get_sender_proto_addr(),
+                        ),
+                    }))
             {
                 error!(
                     "Failed to send an Ethernet packet to EthernetHandler: {}",
@@ -173,7 +175,7 @@ impl ArpHandler {
     }
 }
 
-fn construct_reply_packet(
+fn construct_reply_packet_payload(
     sender_mac_address: MacAddr,
     sender_ipv4_address: Ipv4Addr,
     target_mac_address: MacAddr,
@@ -192,10 +194,10 @@ fn construct_reply_packet(
         payload: vec![],
     };
 
-    struct_to_packet(&arp)
+    struct_to_packet_payload(&arp)
 }
 
-fn struct_to_packet(arp: &Arp) -> Vec<u8> {
+fn struct_to_packet_payload(arp: &Arp) -> Vec<u8> {
     let size: usize = MutableArpPacket::packet_size(arp);
     let mut arp_packet = MutableArpPacket::owned(vec![0; size])
         .expect("the size is greater than or equal the minimum required packet size.");

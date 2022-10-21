@@ -2,9 +2,9 @@ use crate::arp::ArpHandlerEvent;
 use crate::ipv4::Ipv4HandlerEvent;
 use async_stream::stream;
 use futures_util::{pin_mut, StreamExt};
-use pnet_datalink::{Config, DataLinkReceiver, NetworkInterface};
+use pnet_datalink::{Config, DataLinkReceiver, DataLinkSender, NetworkInterface};
 use pnet_packet::arp::ArpPacket;
-use pnet_packet::ethernet::Ethernet;
+use pnet_packet::ethernet::{Ethernet, MutableEthernetPacket};
 use pnet_packet::ipv4::Ipv4Packet;
 use pnet_packet::Packet;
 use std::time::Duration;
@@ -20,7 +20,7 @@ pub(crate) const ETHERNET_ADDRESS_LENGTH: u8 = 6;
 
 #[derive(Debug)]
 pub(crate) enum EthernetHandlerEvent {
-    SendPacket(Ethernet),
+    SendPacket(u32, Ethernet),
     Shutdown,
 }
 
@@ -58,6 +58,13 @@ struct ReceivedPacket {
     /// The interface index (operating system specific).
     interface_index: u32,
     ethernet_packet: pnet_packet::ethernet::EthernetPacket<'static>,
+}
+
+struct Sender {
+    /// The interface index (operating system specific).
+    interface_index: u32,
+    /// Structure for sending packets at the data link layer.
+    tx: Box<dyn DataLinkSender>,
 }
 
 impl EthernetHandler {
@@ -174,7 +181,9 @@ impl EthernetHandler {
                     }
                     Some(event) = self.receiver.recv() => {
                         match event {
-                            EthernetHandlerEvent::SendPacket(ethernet) => {
+                            EthernetHandlerEvent::SendPacket(interface_index, ethernet) => {
+                                let _packet = struct_to_packet(&ethernet);
+                                // send... which interface should we send from?
                             }
                             EthernetHandlerEvent::Shutdown => return,
                         }
@@ -194,4 +203,11 @@ impl EthernetHandler {
         ethernet_packet.get_destination() == interface.mac.expect("should have mac address")
             || ethernet_packet.get_destination().is_broadcast()
     }
+}
+
+fn struct_to_packet(ethernet: &Ethernet) -> MutableEthernetPacket {
+    let size: usize = MutableEthernetPacket::packet_size(ethernet);
+    let ethernet_packet = MutableEthernetPacket::owned(vec![0; size]);
+    ethernet_packet.populate(ethernet);
+    ethernet_packet
 }

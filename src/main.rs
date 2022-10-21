@@ -127,12 +127,6 @@ async fn main() {
     info!("Done.");
 }
 
-// struct Channel {
-//     interface: NetworkInterface,
-//     tx: Box<dyn DataLinkSender>,
-//     rx: Box<dyn DataLinkReceiver>,
-// }
-
 // cf. https://github.com/sigp/lighthouse/blob/d9910f96c5f71881b88eec15253b31890bcd28d2/lighthouse/environment/src/lib.rs#L492
 #[cfg(target_family = "unix")]
 pub(crate) struct SignalFuture {
