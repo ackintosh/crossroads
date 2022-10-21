@@ -4,8 +4,10 @@ use async_stream::stream;
 use futures_util::{pin_mut, StreamExt};
 use pnet_datalink::{Config, DataLinkReceiver, NetworkInterface};
 use pnet_packet::arp::ArpPacket;
+use pnet_packet::ethernet::{Ethernet, MutableEthernetPacket};
 use pnet_packet::ipv4::Ipv4Packet;
 use pnet_packet::Packet;
+use std::collections::HashMap;
 use std::time::Duration;
 use tokio::select;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
@@ -19,6 +21,7 @@ pub(crate) const ETHERNET_ADDRESS_LENGTH: u8 = 6;
 
 #[derive(Debug)]
 pub(crate) enum EthernetHandlerEvent {
+    SendPacket(u32, Ethernet),
     Shutdown,
 }
 
@@ -67,11 +70,12 @@ impl EthernetHandler {
             ..Default::default()
         };
 
+        let mut senders = HashMap::new();
         let mut receivers = self
             .interfaces
             .iter()
             .map(|i| {
-                let (_tx, rx) = match pnet_datalink::channel(i, config) {
+                let (tx, rx) = match pnet_datalink::channel(i, config) {
                     Ok(pnet_datalink::Channel::Ethernet(tx, rx)) => (tx, rx),
                     Ok(_) => panic!("Unhandled channel type"),
                     Err(e) => panic!(
@@ -79,6 +83,8 @@ impl EthernetHandler {
                         e
                     ),
                 };
+
+                senders.insert(i.index, tx);
 
                 Receiver {
                     interface_index: i.index,
@@ -117,9 +123,9 @@ impl EthernetHandler {
 
             pin_mut!(stream);
 
-            loop {
-                debug!("Started EthernetHandler");
+            debug!("Started EthernetHandler");
 
+            loop {
                 select! {
                     received_packet = stream.select_next_some() => {
                         let interface = self
@@ -172,6 +178,15 @@ impl EthernetHandler {
                     }
                     Some(event) = self.receiver.recv() => {
                         match event {
+                            EthernetHandlerEvent::SendPacket(interface_index, ethernet) => {
+                                let packet = struct_to_packet(&ethernet);
+                                if let Some(result) = senders.get_mut(&interface_index).unwrap().send_to(packet.packet(), None) {
+                                    match result {
+                                        Ok(_) => debug!("Sent ethernet packet"),
+                                        Err(e) => error!("Failed to send ethernet packet: {}", e),
+                                    }
+                                }
+                            }
                             EthernetHandlerEvent::Shutdown => return,
                         }
                     }
@@ -190,4 +205,12 @@ impl EthernetHandler {
         ethernet_packet.get_destination() == interface.mac.expect("should have mac address")
             || ethernet_packet.get_destination().is_broadcast()
     }
+}
+
+fn struct_to_packet(ethernet: &Ethernet) -> MutableEthernetPacket {
+    let size: usize = MutableEthernetPacket::packet_size(ethernet);
+    let mut ethernet_packet = MutableEthernetPacket::owned(vec![0; size])
+        .expect("the size is greater than or equal the minimum required packet size.");
+    ethernet_packet.populate(ethernet);
+    ethernet_packet
 }
