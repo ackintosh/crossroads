@@ -8,7 +8,8 @@ RUN apt-get update \
   iptables \
   iproute2 \
   ethtool \
-  iputils-ping
+  iputils-ping \
+  arping
 
 COPY root.bashrc /root/.bashrc
 

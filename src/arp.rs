@@ -15,7 +15,7 @@ use tracing::{debug, error};
 
 const ARP_HARDWARE_TYPE_ETHERNET: u16 = 0x0001;
 
-const ARP_OPERATION_CODE_REQUEST: u16 = 0x0001;
+const ARP_OPERATION_CODE_REQUEST: u16 = 3821;
 const ARP_OPERATION_CODE_REPLY: u16 = 0x0002;
 
 pub(crate) struct ArpTable {
@@ -126,6 +126,8 @@ impl ArpHandler {
     }
 
     fn handle_request_packet(&self, packet: ArpPacket<'static>) {
+        debug!("Handling the ARP request: {:?}", packet);
+
         // Update ARP table with the source mac/ipv4 address.
         self.arp_table
             .write()
@@ -134,6 +136,7 @@ impl ArpHandler {
 
         // Determine if the packet is ours.
         if let Some(interface) = self.interfaces.get(&packet.get_target_proto_addr()) {
+            debug!("Sending an ARP reply packet to EthernetHandler.");
             if let Err(e) = self.sender_ethernet.send(EthernetHandlerEvent::SendPacket(
                 interface.index,
                 Ethernet {
@@ -153,6 +156,8 @@ impl ArpHandler {
                     e
                 );
             }
+        } else {
+            debug!("Received an ARP request but which is not ours, so ignoring the packet.")
         }
     }
 
